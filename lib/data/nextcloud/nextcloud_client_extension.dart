@@ -5,71 +5,66 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart';
 import 'package:http/io_client.dart';
-import 'package:nextcloud/nextcloud.dart';
-import 'package:nextcloud/provisioning_api.dart';
-import 'package:nextcloud/webdav.dart';
 import 'package:saber/data/file_manager/file_manager.dart';
 import 'package:saber/data/nextcloud/errors.dart';
 import 'package:saber/data/prefs.dart';
 import 'package:saber/data/version.dart';
+import 'package:saber/data/webdav/webdav_client.dart';
 
-extension NextcloudClientExtension on NextcloudClient {
-  static final Uri defaultNextcloudUri = Uri.parse(
-    'https://nc.saber.adil.hanney.org',
-  );
-
-  static final userAgent =
-      'Saber/$buildName '
-      '(${Platform.operatingSystem}) '
-      'Dart/${Platform.version.split(' ').first}';
-  static IOClient newHttpClient() =>
-      IOClient(HttpClient()..userAgent = userAgent);
-
+/// 同步用的传输层扩展。
+///
+/// 以前这里挂在 `NextcloudClient` 上（Nextcloud 专用 SDK，路径写死成
+/// `/remote.php/dav/files/<user>/...`）。现在换成标准 WebDAV 客户端，
+/// 群晖、坚果云这类服务都能连，配置只要「地址 + 账号 + 密码」。
+/// 类名保持不变，是为了让同步各处的引用不用改。
+extension NextcloudClientExtension on WebDavClient {
   static const String appRootDirectoryPrefix =
       FileManager.appRootDirectoryPrefix;
   static const configFileName = 'config.sbc';
-  static final configFileUri = PathUri.parse(
-    '$appRootDirectoryPrefix/$configFileName',
-  );
+  static const configFilePath =
+      '$appRootDirectoryPrefix/$configFileName';
 
   static const _utf8Decoder = Utf8Decoder(allowMalformed: true);
 
   static const reproducibleSalt = r'8MnPs64@R&mF8XjWeLrD';
 
-  static NextcloudClient? withSavedDetails() {
+  static final userAgent =
+      'Saber/$buildName '
+      '(${Platform.operatingSystem}) '
+      'Dart/${Platform.version.split(' ').first}';
+
+  /// 群晖/家用 NAS 的 WebDAV 默认是自签证书，因此这里跟随 Saber 已有的
+  /// 「允许不安全的连接」开关（设置 → 高级）。
+  static IOClient newHttpClient() {
+    final httpClient = HttpClient()..userAgent = userAgent;
+    if (stows.allowInsecureConnections.value) {
+      httpClient.badCertificateCallback = (cert, host, port) => true;
+    }
+    return IOClient(httpClient);
+  }
+
+  static WebDavClient? withSavedDetails() {
     if (!stows.loggedIn) return null;
 
     final url = stows.url.value;
-    final username = stows.username.value;
-    final ncPassword = stows.ncPassword.value;
+    if (url.isEmpty) return null;
 
-    final client = NextcloudClient(
-      url.isNotEmpty ? Uri.parse(url) : defaultNextcloudUri,
-      loginName: username,
-      password: ncPassword,
-      appPassword: ncPassword,
-      httpClient: NextcloudClientExtension.newHttpClient(),
+    return WebDavClient(
+      baseUrl: url,
+      username: stows.username.value,
+      password: stows.ncPassword.value,
+      httpClient: newHttpClient(),
     );
-
-    void deAuth() {
-      // Logout if the username changes
-      if (stows.username.value == username) return;
-      stows.username.removeListener(deAuth);
-      client.authentications?.clear();
-    }
-
-    stows.username.addListener(deAuth);
-
-    return client;
   }
 
-  /// Downloads the config from Nextcloud
+  /// 下载远端配置（加密密钥那份）。
   Future<Map<String, String>> getConfig() async {
     final Uint8List bytes;
     try {
-      bytes = await webdav.get(configFileUri);
-    } on DynamiteApiException {
-      return {};
+      bytes = await get(configFilePath);
+    } on WebDavException catch (e) {
+      if (e.statusCode == HttpStatus.notFound) return {};
+      rethrow;
     }
 
     final json = _utf8Decoder.convert(bytes);
@@ -100,16 +95,13 @@ extension NextcloudClientExtension on NextcloudClient {
     return config;
   }
 
-  /// Uploads the given [config] to Nextcloud
+  /// 上传配置到远端（目录不存在会自动建）。
   Future<void> setConfig(Map<String, String> config) async {
     final json = jsonEncode(config);
-    final file = Uint8List.fromList(json.codeUnits);
-    try {
-      await webdav.mkcol(PathUri.parse(appRootDirectoryPrefix));
-    } on DynamiteStatusCodeException catch (e) {
-      if (e.statusCode != HttpStatus.methodNotAllowed) rethrow;
-    }
-    await webdav.put(file, configFileUri);
+    final file = Uint8List.fromList(utf8.encode(json));
+    // mkcol 在目录已存在时内部视为成功
+    await mkcol(appRootDirectoryPrefix);
+    await put(configFilePath, file);
   }
 
   Future<String> loadEncryptionKey({bool generateKeyIfMissing = true}) async {
@@ -149,10 +141,9 @@ extension NextcloudClientExtension on NextcloudClient {
     return key.base64;
   }
 
-  Future<String> getUsername() async {
-    final user = await provisioningApi.users.getCurrentUser();
-    return user.body.ocs.data.id;
-  }
+  /// 以前靠 Nextcloud 的 provisioning API 拿用户名，
+  /// 换通用 WebDAV 后没有这种接口，直接用设置里填的账号。
+  Future<String> getUsername() async => stows.username.value;
 
   Encrypter get encrypter {
     final List<int> encodedPassword = utf8.encode(

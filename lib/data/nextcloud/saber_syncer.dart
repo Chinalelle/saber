@@ -6,12 +6,11 @@ import 'package:collection/collection.dart';
 import 'package:encrypt/encrypt.dart';
 import 'package:flutter/foundation.dart';
 import 'package:logging/logging.dart';
-import 'package:nextcloud/nextcloud.dart';
-import 'package:nextcloud/webdav.dart';
 import 'package:saber/data/file_manager/file_manager.dart';
 import 'package:saber/data/nextcloud/errors.dart';
 import 'package:saber/data/nextcloud/nextcloud_client_extension.dart';
 import 'package:saber/data/prefs.dart';
+import 'package:saber/data/webdav/webdav_client.dart';
 import 'package:saber/pages/editor/editor.dart';
 import 'package:worker_manager/worker_manager.dart';
 
@@ -157,9 +156,9 @@ class const SaberSyncInterface()
 
   @override
   Future<SaberSyncFile> getSyncFileFromRemoteFile(WebDavFile remoteFile) async {
-    final relativeLocalPath = await decryptPath(client!, remoteFile.path.path);
+    final relativeLocalPath = await decryptPath(client!, remoteFile.path);
     if (relativeLocalPath == null)
-      throw Exception('Decryption failed for ${remoteFile.path.path}');
+      throw Exception('Decryption failed for ${remoteFile.path}');
     final localFile = FileManager.getFile(relativeLocalPath);
 
     return SaberSyncFile(remoteFile: remoteFile, localFile: localFile);
@@ -187,7 +186,7 @@ class const SaberSyncInterface()
     if (client == null)
       throw Exception('Tried to download file without being logged in');
 
-    return await client.webdav.get(PathUri.parse(file.remotePath));
+    return await client.get(file.remotePath);
   }
 
   @override
@@ -300,19 +299,18 @@ class const SaberSyncInterface()
     if (client == null)
       throw Exception('Tried to upload file without being logged in');
 
-    await client.webdav.put(
+    await client.put(
+      file.remotePath,
       encryptedBytes,
-      PathUri.parse(file.remotePath),
       lastModified: lastModified,
     );
   }
 
-  static NextcloudClient? _client;
-  static NextcloudClient? get client {
-    if (_client?.authentications?.isEmpty ?? true) {
-      _client = NextcloudClientExtension.withSavedDetails();
-    }
-    return _client;
+  static WebDavClient? _client;
+  static WebDavClient? get client {
+    // WebDavClient 是「地址 + 账号 + 密码」的无状态客户端，没有会话可失效，
+    // 缓存一个实例复用连接即可。
+    return _client ??= NextcloudClientExtension.withSavedDetails();
   }
 
   /// A list of remote files from server,
@@ -339,31 +337,11 @@ class const SaberSyncInterface()
     if (client == null) return {};
 
     try {
-      return await client.webdav
-          .propfind(
-            PathUri.parse(FileManager.appRootDirectoryPrefix),
-            prop: const WebDavPropWithoutValues.fromBools(
-              davGetcontentlength: true,
-              davGetlastmodified: true,
-            ),
-          )
-          .then(
-            (multistatus) => multistatus
-                .toWebDavFiles()
-                // ignore root directory itself
-                .where(
-                  (file) =>
-                      file.path.path !=
-                      '${FileManager.appRootDirectoryPrefix}/',
-                )
-                .toSet(),
-          );
-    } on DynamiteStatusCodeException catch (e, st) {
+      return (await client.list(FileManager.appRootDirectoryPrefix)).toSet();
+    } on WebDavException catch (e, st) {
       if (e.statusCode == HttpStatus.notFound) {
         log.info('findRemoteFiles: Creating app directory', e, st);
-        await client.webdav.mkcol(
-          PathUri.parse(FileManager.appRootDirectoryPrefix),
-        );
+        await client.mkcol(FileManager.appRootDirectoryPrefix);
         log.info('findRemoteFiles: Generating config');
         await client
             .getConfig()
@@ -386,7 +364,7 @@ class const SaberSyncInterface()
   }
 
   static Future<String> encryptPath(
-    NextcloudClient? client,
+    WebDavClient? client,
     String path,
   ) async {
     if (_encryptMap.containsKey(path)) return _encryptMap[path]!;
@@ -408,7 +386,7 @@ class const SaberSyncInterface()
   }
 
   static Future<String?> decryptPath(
-    NextcloudClient? client,
+    WebDavClient? client,
     String path,
   ) async {
     // Ignore README.md and other ignored files
@@ -421,7 +399,7 @@ class const SaberSyncInterface()
         path.lastIndexOf('/') + 1,
         path.length - encExtension.length,
       );
-    } else if (path.endsWith(NextcloudClientExtension.configFileUri.path)) {
+    } else if (path.endsWith(NextcloudClientExtension.configFilePath)) {
       // Config file is a special case, it's not encrypted
       return '/${NextcloudClientExtension.configFileName}';
     } else {
@@ -514,7 +492,7 @@ class const SaberSyncInterface()
     bool preferCache = true,
   }) async {
     final cachedWebDavFile = remoteFiles.firstWhereOrNull(
-      (remoteFile) => remoteFile.path.path == remotePath,
+      (remoteFile) => remoteFile.path == remotePath,
     );
     if (preferCache && cachedWebDavFile != null) return cachedWebDavFile;
 
@@ -532,15 +510,7 @@ class const SaberSyncInterface()
     if (client == null) return null;
 
     try {
-      return await client.webdav
-          .propfind(
-            PathUri.parse(remotePath),
-            prop: const WebDavPropWithoutValues.fromBools(
-              davGetcontentlength: true,
-              davGetlastmodified: true,
-            ),
-          )
-          .then((multistatus) => multistatus.toWebDavFiles().first);
+      return await client.stat(remotePath);
     } catch (e, st) {
       log.fine('Remote file not found for $remotePath: $e', e, st);
     }
@@ -568,7 +538,7 @@ class SaberSyncFile extends AbstractSyncFile<File, WebDavFile> {
         remotePath != null || remoteFile != null,
         'At least one of remotePath or remoteFile must be provided',
       ) {
-    this.remotePath = remotePath ?? remoteFile!.path.path;
+    this.remotePath = remotePath ?? remoteFile!.path;
   }
 
   static Future<SaberSyncFile> relative(String relativeFilePath) {

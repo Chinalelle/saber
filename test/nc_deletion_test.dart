@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:abstract_sync/abstract_sync.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nextcloud/webdav.dart';
 import 'package:saber/data/file_manager/file_manager.dart';
 import 'package:saber/data/flavor_config.dart';
 import 'package:saber/data/nextcloud/nextcloud_client_extension.dart';
@@ -28,7 +27,6 @@ void main() {
     stows.encPassword.value = 'test.deletion';
 
     final client = NextcloudClientExtension.withSavedDetails()!;
-    final webdav = client.webdav;
 
     await client.loadEncryptionKey();
 
@@ -56,10 +54,8 @@ void main() {
 
     // Check that the file exists on Nextcloud
     printOnFailure('Checking if ${syncFile.remotePath} exists on Nextcloud');
-    final webDavFiles = await webdav
-        .propfind(PathUri.parse(syncFile.remotePath), depth: WebDavDepth.zero)
-        .then((multistatus) => multistatus.toWebDavFiles());
-    expect(webDavFiles, hasLength(1), reason: 'File should exist on Nextcloud');
+    final uploaded = await client.stat(syncFile.remotePath);
+    expect(uploaded, isNotNull, reason: 'File should exist on Nextcloud');
 
     // Delete the file
     FileManager.deleteFile(filePathLocal, alsoUpload: false);
@@ -70,16 +66,9 @@ void main() {
     await syncer.uploader.waitUntilEmpty();
 
     // Check that the file is empty on Nextcloud
-    final webDavFile = await webdav
-        .propfind(
-          PathUri.parse(syncFile.remotePath),
-          depth: WebDavDepth.zero,
-          prop: const WebDavPropWithoutValues.fromBools(
-            davGetcontentlength: true,
-          ),
-        )
-        .then((multistatus) => multistatus.toWebDavFiles().single);
-    expect(webDavFile.size, 0, reason: 'File should be empty on Nextcloud');
+    final webDavFile = await client.stat(syncFile.remotePath);
+    expect(webDavFile, isNotNull, reason: 'File should still exist on Nextcloud');
+    expect(webDavFile!.size, 0, reason: 'File should be empty on Nextcloud');
 
     // Sync the file from Nextcloud
     syncFile.remoteFile = webDavFile;

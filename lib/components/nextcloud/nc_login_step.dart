@@ -1,82 +1,89 @@
-import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:nextcloud/core.dart';
-import 'package:nextcloud/nextcloud.dart';
-import 'package:regexed_validator/regexed_validator.dart';
 import 'package:saber/components/settings/app_info.dart';
 import 'package:saber/components/theming/adaptive_circular_progress_indicator.dart';
-import 'package:saber/data/nextcloud/login_flow.dart';
 import 'package:saber/data/nextcloud/nextcloud_client_extension.dart';
 import 'package:saber/data/prefs.dart';
+import 'package:saber/data/webdav/webdav_client.dart';
 import 'package:saber/i18n/strings.g.dart';
-import 'package:saber/pages/user/login.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const _width = 400.0;
 
-/// Lighter than the actual Saber color for better contrast
-const _saberColor = Color(0xFFffd642);
-const _onSaberColor = Colors.black;
-const _saberColorDarkened = Color(0xFFc29800);
 const _ncColor = Color(0xFF0082c9);
 
+/// 登录步骤。
+///
+/// 以前这里跑的是 Nextcloud 的 login flow v2（弹浏览器、等用户授权、再轮询拿
+/// app password），只有 Nextcloud 系的服务能用。改成通用 WebDAV 之后就没这套
+/// 东西了，直接填「服务器地址 + 用户名 + 密码」，当场用 WebDAV 探活验证。
 class NcLoginStep extends HookWidget {
   const new({super.key, required this.recheckCurrentStep});
 
   final void Function() recheckCurrentStep;
 
-  SaberLoginFlow _createLoginFlow(BuildContext context, Uri serverUrl) {
-    final loginFlow = SaberLoginFlow.start(serverUrl: serverUrl);
-
-    showAdaptiveDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => _LoginFlowDialog(loginFlow: loginFlow),
-    );
-
-    loginFlow.future.then((credentials) async {
-      final client = NextcloudClient(
-        Uri.parse(credentials.server),
-        loginName: credentials.loginName,
-        appPassword: credentials.appPassword,
-        httpClient: NextcloudClientExtension.newHttpClient(),
-      );
-      final username = await client.getUsername();
-
-      stows.url.value =
-          credentials.server ==
-              NextcloudClientExtension.defaultNextcloudUri.toString()
-          ? ''
-          : credentials.server;
-      stows.username.value = username;
-      stows.ncPassword.value = credentials.appPassword;
-      stows.encPassword.value = '';
-
-      stows.pfp.value = null;
-      client.core.avatar
-          .getAvatar(userId: username, size: AvatarGetAvatarSize.$512)
-          .then((response) => response.body)
-          .then((pfp) => stows.pfp.value = pfp);
-
-      recheckCurrentStep();
-    });
-
-    return loginFlow;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final loginFlow = useState<SaberLoginFlow?>(null);
-    // dispose the login flow when it changes or the widget is disposed
-    useEffect(() => loginFlow.value?.dispose, [loginFlow.value]);
+    final addressController = useTextEditingController(text: stows.url.value);
+    final usernameController = useTextEditingController(
+      text: stows.username.value,
+    );
+    final passwordController = useTextEditingController();
+    final busy = useState(false);
+    final error = useState<String?>(null);
+
+    Future<void> submit() async {
+      final address = _prependHttpsIfMissing(addressController.text.trim());
+      final username = usernameController.text.trim();
+      final password = passwordController.text;
+
+      busy.value = true;
+      error.value = null;
+
+      final client = WebDavClient(
+        baseUrl: address,
+        username: username,
+        password: password,
+        httpClient: NextcloudClientExtension.newHttpClient(),
+      );
+      try {
+        // 能对根目录做一次 PROPFIND 就说明地址、账号、密码都对
+        await client.checkCredentials();
+
+        stows.url.value = address;
+        stows.username.value = username;
+        stows.ncPassword.value = password;
+        stows.encPassword.value = '';
+        stows.pfp.value = null;
+
+        recheckCurrentStep();
+      } on WebDavException catch (e) {
+        error.value = e.statusCode == 401 || e.statusCode == 403
+            ? t.login.ncLoginStep.wrongCredentials
+            : t.login.ncLoginStep.loginFailed(error: e.toString());
+      } catch (e) {
+        error.value = t.login.ncLoginStep.loginFailed(error: '$e');
+      } finally {
+        client.close();
+        busy.value = false;
+      }
+    }
 
     final screenSize = MediaQuery.sizeOf(context);
     final shouldUseTwoColumns = _shouldUseTwoColumns(screenSize);
+    final form = _LoginForm(
+      addressController: addressController,
+      usernameController: usernameController,
+      passwordController: passwordController,
+      busy: busy.value,
+      error: error.value,
+      onSubmit: submit,
+    );
+
     if (shouldUseTwoColumns) {
       return Center(
         child: Padding(
@@ -91,26 +98,7 @@ class NcLoginStep extends HookWidget {
                 Expanded(
                   child: _Header(shouldUseTwoColumns: shouldUseTwoColumns),
                 ),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: .min,
-                    spacing: 48,
-                    children: [
-                      _LoginWithSaber(
-                        login: () => loginFlow.value = _createLoginFlow(
-                          context,
-                          NextcloudClientExtension.defaultNextcloudUri,
-                        ),
-                      ),
-                      _LoginWithNextcloud(
-                        login: (url) => loginFlow.value = _createLoginFlow(
-                          context,
-                          Uri.parse(url),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                Expanded(child: form),
               ],
             ),
           ),
@@ -128,20 +116,120 @@ class NcLoginStep extends HookWidget {
           const SizedBox(height: 16),
           _Header(shouldUseTwoColumns: shouldUseTwoColumns),
           const SizedBox(height: 32),
-          _LoginWithSaber(
-            login: () => loginFlow.value = _createLoginFlow(
-              context,
-              NextcloudClientExtension.defaultNextcloudUri,
-            ),
-          ),
-          const SizedBox(height: 32),
-          _LoginWithNextcloud(
-            login: (url) =>
-                loginFlow.value = _createLoginFlow(context, Uri.parse(url)),
-          ),
+          form,
         ],
       );
     }
+  }
+}
+
+class _LoginForm extends HookWidget {
+  const new({
+    required this.addressController,
+    required this.usernameController,
+    required this.passwordController,
+    required this.busy,
+    required this.error,
+    required this.onSubmit,
+  });
+
+  final TextEditingController addressController;
+  final TextEditingController usernameController;
+  final TextEditingController passwordController;
+  final bool busy;
+  final String? error;
+  final Future<void> Function() onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = ColorScheme.of(context);
+
+    Widget field({
+      required TextEditingController controller,
+      required String label,
+      String? hint,
+      bool obscure = false,
+      bool autocorrect = false,
+      Iterable<String>? autofillHints,
+      TextInputType? keyboardType,
+    }) {
+      return TextField(
+        controller: controller,
+        enabled: !busy,
+        obscureText: obscure,
+        autocorrect: autocorrect,
+        enableSuggestions: autocorrect,
+        keyboardType: keyboardType,
+        autofillHints: autofillHints,
+        decoration: InputDecoration(labelText: label, hintText: hint),
+        onSubmitted: (_) => onSubmit(),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: .stretch,
+      children: [
+        Row(
+          mainAxisAlignment: .end,
+          children: [
+            SvgPicture.asset(
+              'assets/images/nextcloud-logo.svg',
+              width: 32,
+              height: 32,
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                t.login.ncLoginStep.otherNcServer,
+                style: theme.textTheme.headlineSmall,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        field(
+          controller: addressController,
+          label: t.login.ncLoginStep.serverUrl,
+          hint: t.login.ncLoginStep.serverUrlHint,
+          autofillHints: const [AutofillHints.url],
+          keyboardType: TextInputType.url,
+        ),
+        const SizedBox(height: 8),
+        field(
+          controller: usernameController,
+          label: t.login.ncLoginStep.username,
+          autofillHints: const [AutofillHints.username],
+        ),
+        const SizedBox(height: 8),
+        field(
+          controller: passwordController,
+          label: t.login.ncLoginStep.password,
+          obscure: true,
+          autofillHints: const [AutofillHints.password],
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton(
+          onPressed: busy ? null : onSubmit,
+          style: _buttonStyleFromBrand(_ncColor),
+          child: busy
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: AdaptiveCircularProgressIndicator(),
+                )
+              : Text(t.login.ncLoginStep.login),
+        ),
+        if (error != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            error!,
+            style: TextStyle(color: colorScheme.error),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ],
+    );
   }
 }
 
@@ -200,198 +288,6 @@ class const _HeaderImage({required final bool shouldUseTwoColumns})
         height: min(_width * 576 / 844.6693, maxHeight),
         excludeFromSemantics: true,
       ),
-    );
-  }
-}
-
-class const _LoginWithSaber({required final VoidCallback login})
-    extends HookWidget {
-  @override
-  Widget build(BuildContext context) {
-    final buttonStyle = useMemoized(
-      () => _buttonStyleFromBrand(_saberColor, _onSaberColor),
-      const [],
-    );
-
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: .stretch,
-      children: [
-        Row(
-          mainAxisAlignment: .end,
-          children: [
-            SvgPicture.asset('assets/icon/icon.svg', width: 32, height: 32),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                t.login.ncLoginStep.saberNcServer,
-                style: theme.textTheme.headlineSmall,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        ElevatedButton(
-          onPressed: login,
-          style: buttonStyle,
-          child: Text(t.login.ncLoginStep.loginWithSaber),
-        ),
-        const SizedBox(height: 4),
-        Text.rich(
-          t.login.signup(
-            linkToSignup: (text) => TextSpan(
-              text: text,
-              style: TextStyle(
-                color: theme.colorScheme.brightness == .dark
-                    ? _saberColor
-                    : _saberColorDarkened,
-              ),
-              recognizer: TapGestureRecognizer()
-                ..onTap = () {
-                  launchUrl(NcLoginPage.signupUrl);
-                },
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class const _LoginWithNextcloud({
-  required final void Function(String url) login,
-}) extends HookWidget {
-  @override
-  Widget build(BuildContext context) {
-    final serverUrlController = useTextEditingController();
-
-    final isServerUrlValid = useListenableSelector(serverUrlController, () {
-      final url = _prependHttpsIfMissing(serverUrlController.text);
-      return validator.url(url);
-    });
-
-    final buttonStyle = useMemoized(
-      () => _buttonStyleFromBrand(_ncColor),
-      const [],
-    );
-
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: .stretch,
-      children: [
-        Row(
-          mainAxisAlignment: .end,
-          children: [
-            SvgPicture.asset(
-              'assets/images/nextcloud-logo.svg',
-              width: 32,
-              height: 32,
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                t.login.ncLoginStep.otherNcServer,
-                style: theme.textTheme.headlineSmall,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          autocorrect: false,
-          autofillHints: const [AutofillHints.url],
-          controller: serverUrlController,
-          decoration: InputDecoration(
-            labelText: t.login.ncLoginStep.serverUrl,
-            hintText: 'https://nc.example.com',
-          ),
-        ),
-        const SizedBox(height: 4),
-        ElevatedButton(
-          onPressed: isServerUrlValid
-              ? () {
-                  serverUrlController.text = _prependHttpsIfMissing(
-                    serverUrlController.text,
-                  );
-                  login(serverUrlController.text);
-                }
-              : null,
-          style: buttonStyle,
-          child: Text(t.login.ncLoginStep.loginWithNextcloud),
-        ),
-      ],
-    );
-  }
-}
-
-class const _LoginFlowDialog({required final SaberLoginFlow loginFlow})
-    extends HookWidget {
-  @override
-  Widget build(BuildContext context) {
-    useMemoized(
-      () => loginFlow.future.then((_) {
-        if (!context.mounted) return;
-        Navigator.of(context).pop();
-      }),
-      [loginFlow],
-    );
-
-    return AlertDialog.adaptive(
-      title: Text(t.login.ncLoginStep.loginFlow.pleaseAuthorize),
-      content: Column(
-        mainAxisSize: .min,
-        children: [
-          Text(t.login.ncLoginStep.loginFlow.followPrompts),
-          TextButton(
-            onPressed: loginFlow.openLoginUrl,
-            child: Text(t.login.ncLoginStep.loginFlow.browserDidntOpen),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            loginFlow.dispose();
-            Navigator.of(context).pop();
-          },
-          child: Text(t.common.cancel),
-        ),
-        _FakeDoneButton(child: Text(t.common.done)),
-      ],
-    );
-  }
-}
-
-/// [SaberLoginFlow] polls the login flow and completes automatically.
-///
-/// The done button isn't needed, but it's added to prevent the user from
-/// closing the dialog before the login flow is completed.
-///
-/// When pressed, the text will be replaced with a spinner for 2 seconds.
-class const _FakeDoneButton({required final Widget child}) extends HookWidget {
-  @override
-  Widget build(BuildContext context) {
-    final pressed = useState(false);
-    final timer = useRef<Timer?>(null);
-    useEffect(() => timer.value?.cancel, [timer.value]);
-
-    return TextButton(
-      onPressed: pressed.value
-          ? null
-          : () {
-              timer.value?.cancel();
-              timer.value = Timer(const Duration(seconds: 2), () {
-                pressed.value = false;
-              });
-              pressed.value = true;
-            },
-      child: pressed.value
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: AdaptiveCircularProgressIndicator(),
-            )
-          : child,
     );
   }
 }
