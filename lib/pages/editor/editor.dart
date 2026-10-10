@@ -10,9 +10,11 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart' as flutter_quill;
+import 'package:image_picker/image_picker.dart';
 import 'package:keybinder/keybinder.dart';
 import 'package:logging/logging.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:saber/components/canvas/_asset_cache.dart';
 import 'package:saber/components/canvas/_stroke.dart';
@@ -21,6 +23,8 @@ import 'package:saber/components/canvas/canvas_gesture_detector.dart';
 import 'package:saber/components/canvas/canvas_image.dart';
 import 'package:saber/components/canvas/image/editor_image.dart';
 import 'package:saber/components/canvas/save_indicator.dart';
+import 'package:saber/components/editor/outline_panel.dart';
+import 'package:saber/components/editor/page_pill.dart';
 import 'package:saber/components/editor/read_only_banner.dart';
 import 'package:saber/components/theming/adaptive_alert_dialog.dart';
 import 'package:saber/components/theming/adaptive_icon.dart';
@@ -30,9 +34,12 @@ import 'package:saber/components/toolbar/color_bar.dart';
 import 'package:saber/components/toolbar/editor_bottom_sheet.dart';
 import 'package:saber/components/toolbar/editor_page_manager.dart';
 import 'package:saber/components/toolbar/toolbar.dart';
+import 'package:saber/data/ai/outline_generator.dart';
 import 'package:saber/data/editor/editor_core_info.dart';
 import 'package:saber/data/editor/editor_exporter.dart';
 import 'package:saber/data/editor/editor_history.dart';
+import 'package:saber/data/editor/markdown_exporter.dart';
+import 'package:saber/data/editor/outline_entry.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/extensions/change_notifier_extensions.dart';
 import 'package:saber/data/extensions/matrix4_extensions.dart';
@@ -55,17 +62,25 @@ import 'package:super_clipboard/super_clipboard.dart';
 typedef _PhotoInfo = ({Uint8List bytes, String extension});
 
 class Editor extends StatefulWidget {
-  new({super.key, String? path, this.customTitle, this.pdfPath})
-    : initialPath = path != null
-          ? Future.value(path)
-          : FileManager.newFilePath('/'),
-      needsNaming = path == null;
+  new({
+    super.key,
+    String? path,
+    this.customTitle,
+    this.pdfPath,
+    this.startAsInfiniteCanvas = false,
+  }) : initialPath = path != null
+           ? Future.value(path)
+           : FileManager.newFilePath('/'),
+       needsNaming = path == null;
 
   final Future<String> initialPath;
   final bool needsNaming;
 
   final String? customTitle;
   final String? pdfPath;
+
+  /// 新建的笔记是不是「无边画布」。
+  final bool startAsInfiniteCanvas;
 
   /// The file extension used by the app.
   /// Files with this extension are
@@ -99,9 +114,46 @@ class Editor extends StatefulWidget {
 class EditorState extends State<Editor> {
   final log = Logger('EditorState');
 
+  // ── 把工具栏拖到任意一条边 ──────────────────────────────
+  // 长按工具栏即可开始拖动：工具栏先收成一个圆跟手走，屏幕上高亮离得最近
+  // 的那条边，松手后吸附过去（写进 stows.editorToolbarAlignment）。
+  /// 正在拖动工具栏。
+  var _isToolbarDragging = false;
+  /// 拖动中的圆相对本页左上角的位置。
+  var _toolbarDragLocal = Offset.zero;
+  /// 松手时会吸附到的那条边。
+  AxisDirection? _toolbarSnapTarget;
+
+  /// 工具栏被手动收起了（腾出屏幕写字）。点边缘那条细条就能收回来。
+  /// 只在本次编辑里有效，没写进设置 —— 免得下次打开笔记找不到工具栏。
+  var _toolbarCollapsed = false;
+
+  /// 长按工具栏的计时器：按住不动一小会儿就把工具栏拎起来。
+  Timer? _toolbarLongPressTimer;
+  /// 按下时的位置，用来判断手指有没有移动（动了就当成点击/滚动，不算长按）。
+  Offset? _toolbarPressStart;
+  /// 长按要略晚于按钮 Tooltip 的 500ms，这样进入拖动时 Tooltip 已经显示出来，
+  /// 那句 `dismissAllToolTips()` 才能把它收掉（早了就收了个寂寞）。
+  static const _toolbarLongPressDelay = Duration(milliseconds: 600);
+  static const _toolbarLongPressSlop = 18.0;
+
+  /// 拖动中那个圆的直径。
+  static const _toolbarDragCircleSize = 64.0;
+  /// 圆和手指之间的间隙，让圆落在手指下方而不是被压住。
+  static const _toolbarDragCircleGap = 14.0;
+  /// 离屏幕边缘多近才提示吸附目标；太远就什么都不显示，免得四周挂满边框。
+  static const _toolbarSnapShowDistance = 160.0;
+  /// 贴边指示条的粗细。
+  static const _toolbarSnapBarThickness = 8.0;
+
   late var coreInfo = EditorCoreInfo.placeholder;
 
   final _canvasGestureDetectorKey = GlobalKey<CanvasGestureDetectorState>();
+  /// 编辑页 body 的 key，拖动工具栏时用它换算坐标。
+  ///
+  /// 注意不能用 State 的 context：那个对应整个页面（含 AppBar），而拖动覆盖层是贴在
+  /// body 上的，两者差了整整一个 AppBar 的高度 —— 用错基准圆就会往下偏。
+  final _editorBodyKey = GlobalKey();
   final _transformationController = TransformationController();
   double get scrollY {
     final transformation = _transformationController.value;
@@ -144,7 +196,7 @@ class EditorState extends State<Editor> {
       case .pencil:
         return Pencil.currentPencil;
       case .eraser:
-        return Eraser();
+        return Eraser.currentEraser;
       case .select:
         return Select.currentSelect;
       case .textEditing:
@@ -172,6 +224,40 @@ class EditorState extends State<Editor> {
 
   /// The last non-Eraser [currentTool] value.
   late Tool _lastNonEraserTool = Pen.currentPen;
+
+  /// 这一笔橡皮擦掉的原有笔迹。
+  final _erasedStrokes = <Stroke>[];
+  /// 这一笔橡皮把原有笔迹切开后新生成的那几段。
+  final _addedStrokes = <Stroke>[];
+
+  /// 分配文本框 id 用（同一页内唯一即可）。
+  var _nextTextBoxId = 0;
+
+  /// 在当前页插一个新的浮动文本框，并把光标放进去。
+  ///
+  /// 「无边画布」写文字就用这个 —— 想在哪写就在哪放一个框。
+  void insertTextBox() {
+    if (coreInfo.readOnly) return;
+    if (coreInfo.pages.isEmpty) createPage(0);
+
+    final page = coreInfo.pages[currentPageIndex];
+    // 略微错开，免得连点几下全叠在一起
+    final offset = (page.textBoxes.length % 6) * 40.0;
+
+    final box = EditorTextBox(
+      id: _nextTextBoxId++,
+      position: Offset(60 + offset, 60 + offset),
+      size: EditorTextBox.defaultSize,
+    );
+    page.textBoxes.add(box);
+    listenToQuillChanges(box.quill, currentPageIndex);
+
+    setState(() {});
+    autosaveAfterDelay();
+
+    // 直接聚焦，用户插完就能打字
+    box.quill.focusNode.requestFocus();
+  }
 
   /// If the stylus button is pressed, or was pressed, during the current draw gesture.
   ///
@@ -210,12 +296,29 @@ class EditorState extends State<Editor> {
 
   Future _loadCoreInfo(String filePath) async {
     coreInfo = await EditorCoreInfo.loadFromFilePath(filePath);
+
+    // 新建的无边画布：整块大画布，套用上次用过的预设
+    if (widget.startAsInfiniteCanvas && coreInfo.isEmpty) {
+      coreInfo = coreInfo.copyWith(
+        isInfiniteCanvas: true,
+        backgroundColor: stows.infiniteCanvasColor.value,
+        backgroundPattern: stows.infiniteCanvasPattern.value,
+        canvasTexture: stows.infiniteCanvasTexture.value,
+      );
+    }
+
     if (coreInfo.readOnly) {
       log.info('Loaded file as read-only: ${coreInfo.readOnlyReason}');
     }
 
     for (int pageIndex = 0; pageIndex < coreInfo.pages.length; pageIndex++) {
       listenToQuillChanges(coreInfo.pages[pageIndex].quill, pageIndex);
+      // 浮动文本框各自有一份独立的 Quill 文档，重开笔记后也得让它们挂上监听，
+      // 否则在框里打字/插公式都不会进 undo 历史，autosave 会当成「没改动」跳过，
+      // 退出时整个框的内容就丢了（只有刚插入的那个框是当场注册过的）。
+      for (final box in coreInfo.pages[pageIndex].textBoxes) {
+        listenToQuillChanges(box.quill, pageIndex);
+      }
     }
 
     if (coreInfo.isEmpty) {
@@ -230,6 +333,18 @@ class EditorState extends State<Editor> {
           image.onDeleteImage = onDeleteImage;
           image.onMiscChange = autosaveAfterDelay;
         }
+      }
+    }
+
+    // 无边画布必须真的是一整块大画布。
+    //
+    // 新建路径靠 createPage 拿到了 6000×6000，但**已经存在的页面**（普通笔记
+    // 1000×1400，或者早期版本建的无边画布笔记）不会自己变大。画布比屏幕宽不了
+    // 多少的时候，横向平移余量约等于 0，`_matrixTranslate` 会把横向位移整个丢掉
+    // —— 用户看到的现象就是"能上下拖，不能左右拖"。
+    if (coreInfo.isInfiniteCanvas) {
+      for (final page in coreInfo.pages) {
+        page.size = EditorPage.infiniteSize;
       }
     }
 
@@ -290,12 +405,215 @@ class EditorState extends State<Editor> {
 
   /// Creates pages until the given page index exists,
   /// plus an extra blank page
+  /// 用当前橡皮在 [position] 处擦一下：直接改页面笔迹，并把改动攒进待提交的历史。
+  ///
+  /// 圆形/方形擦子会把一条笔迹切成几段，所以除了"删掉哪些"还会"新增哪些"。
+  void _eraseAt(Offset position, EditorPage page) {
+    final tool = currentTool;
+    if (tool is! Eraser) return;
+
+    // 让画布在笔尖处画出与实际擦除区域等大的空心预览
+    tool.previewPosition = position;
+
+    final result = tool.eraseAt(position, page.strokes);
+    if (result.removed.isEmpty && result.added.isEmpty) return;
+
+    page.strokes.removeWhere(result.removed.contains);
+    page.strokes.addAll(result.added);
+
+    _erasedStrokes.addAll(result.removed);
+    _addedStrokes.addAll(result.added);
+  }
+
   void createPage(int pageIndex) {
     while (pageIndex >= coreInfo.pages.length - 1) {
-      final page = EditorPage();
+      final page = EditorPage(
+        // 无边画布就是一整块大画布，不走 1000×1400 的文档页
+        size: coreInfo.isInfiniteCanvas ? EditorPage.infiniteSize : null,
+      );
       coreInfo.pages.add(page);
       listenToQuillChanges(page.quill, coreInfo.pages.length - 1);
     }
+  }
+
+  /// 无边画布拖到边上自动接了一段之后，重建一次
+  /// —— `Canvas` 的 `SizedBox` 是 build 时读的 `page.size`。
+  void _onInfiniteCanvasResized() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// 跳到指定页（0 起）。页码胶囊和大纲面板都用它。
+  void _jumpToPage(int pageIndex) {
+    if (pageIndex < 0 || pageIndex >= coreInfo.pages.length) return;
+    CanvasGestureDetector.scrollToPage(
+      pageIndex: pageIndex,
+      pages: coreInfo.pages,
+      screenWidth: MediaQuery.sizeOf(context).width,
+      transformationController: _transformationController,
+    );
+  }
+
+  /// 右下角的页码胶囊。
+  ///
+  /// 挂在 body 的 Stack 上并用 `_transformationController` 驱动 —— editor 本身
+  /// 不监听滚动，所以必须靠这个 builder 才能在滚动时刷新页码。
+  /// 无边画布只有一页、单页文档也没有页可翻，这两种情况直接不显示。
+  Widget _buildPagePill(BuildContext context) {
+    if (coreInfo.isInfiniteCanvas) return const SizedBox.shrink();
+    final pageCount = coreInfo.pages.length;
+    if (pageCount <= 1) return const SizedBox.shrink();
+
+    return Positioned(
+      right: 16,
+      bottom: 16,
+      child: ValueListenableBuilder<Matrix4>(
+        valueListenable: _transformationController,
+        builder: (context, _, _) {
+          final current = currentPageIndex.clamp(0, pageCount - 1);
+          return PagePill(
+            currentPage: current,
+            pageCount: pageCount,
+            onJump: _jumpToPage,
+            onPrevious: current > 0 ? () => _jumpToPage(current - 1) : null,
+            onNext: current < pageCount - 1
+                ? () => _jumpToPage(current + 1)
+                : null,
+          );
+        },
+      ),
+    );
+  }
+
+  // ── AI 大纲 ────────────────────────────────────────────
+
+  /// 面板里正在显示的大纲。跟随 editor 的生命周期，
+  /// 所以生成过程中用户关掉面板也不会往已释放的 notifier 上写。
+  final _outlineEntries = ValueNotifier<List<OutlineEntry>>(const []);
+
+  /// 生成进度；null 表示没在生成。
+  final _outlineProgress = ValueNotifier<OutlineProgress?>(null);
+  var _outlineCancelled = false;
+
+  /// PDF 页码（0 起）-> `coreInfo.pages` 下标。
+  ///
+  /// PDF 导入时是「一页 PDF = 一个 EditorPage」，所以跳转要用这个映射。
+  /// 用户的页如果被删过，缺的条目后面会被丢掉。
+  Map<int, int> _pdfPageToEditorPage() {
+    final map = <int, int>{};
+    for (var i = 0; i < coreInfo.pages.length; i++) {
+      final image = coreInfo.pages[i].backgroundImage;
+      if (image is PdfEditorImage) map[image.pdfPage] = i;
+    }
+    return map;
+  }
+
+  File? _outlinePdfFile() {
+    for (final page in coreInfo.pages) {
+      final image = page.backgroundImage;
+      if (image is PdfEditorImage) return image.pdfFile;
+    }
+    return null;
+  }
+
+  void _showOutlinePanel() {
+    final map = _pdfPageToEditorPage();
+    if (map.isEmpty) return;
+
+    _outlineEntries.value = coreInfo.outline;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => ValueListenableBuilder<OutlineProgress?>(
+        valueListenable: _outlineProgress,
+        builder: (sheetContext, progress, _) =>
+            ValueListenableBuilder<List<OutlineEntry>>(
+              valueListenable: _outlineEntries,
+              builder: (sheetContext, entries, _) => ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
+                ),
+                child: OutlinePanel(
+                  entries: entries,
+                  currentPage: currentPageIndex,
+                  progress: progress,
+                  onGenerate: () =>
+                      _generateOutline(map: map),
+                  onCancel: () => _outlineCancelled = true,
+                  onTap: (entry) {
+                    Navigator.of(sheetContext).pop();
+                    _jumpToPage(entry.pageIndex);
+                  },
+                ),
+              ),
+            ),
+      ),
+    );
+  }
+
+  Future<void> _generateOutline({required Map<int, int> map}) async {
+    final file = _outlinePdfFile();
+    if (file == null) return;
+
+    _outlineCancelled = false;
+    _outlineProgress.value = OutlineProgress(
+      done: 0,
+      total: map.length,
+      status: '',
+    );
+
+    try {
+      final pdf = await coreInfo.assetCache.pdfDocumentCache.load(file.path);
+
+      // 有书签就白拿：不要钱，页码还绝对准
+      final bookmarks = await OutlineGenerator.fromPdfBookmarks(
+        pdf,
+        pdfPageToEditorPage: map,
+      );
+      if (bookmarks.isNotEmpty) {
+        _applyOutline(bookmarks);
+        return;
+      }
+
+      final entries = await OutlineGenerator.generateWithAi(
+        pdf: pdf,
+        pagesToProcess: map.keys.toList()..sort(),
+        pdfPageToEditorPage: map,
+        apiKey: stows.aiApiKey.value,
+        baseUrl: stows.aiBaseUrl.value,
+        model: stows.aiModel.value,
+        pagesPerBatch: stows.aiPagesPerBatch.value,
+        renderLongSide: stows.aiRenderLongSide.value,
+        onProgress: (p) => _outlineProgress.value = p,
+        isCancelled: () => _outlineCancelled,
+      );
+      _applyOutline(entries);
+    } on OutlineException catch (e) {
+      _showOutlineError(e.message);
+    } catch (e, stackTrace) {
+      log.warning('大纲生成失败', e, stackTrace);
+      _showOutlineError('$e');
+    } finally {
+      _outlineProgress.value = null;
+    }
+  }
+
+  void _applyOutline(List<OutlineEntry> entries) {
+    coreInfo.outline = entries;
+    _outlineEntries.value = entries;
+    // 大纲不画在画布上，不会进 undo 历史；而 autosave/saveToFile 都靠
+    // history.isCurrentStateSaved 判断「有没有改动」，这里不强制保存的话，
+    // 生成完直接退出笔记，大纲就丢了。
+    saveToFile(force: true);
+  }
+
+  void _showOutlineError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${t.editor.outline.failed}：$message')),
+    );
   }
 
   void removeExcessPages() {
@@ -568,12 +886,7 @@ class EditorState extends State<Editor> {
         currentPressure,
       );
     } else if (currentTool is Eraser) {
-      for (final stroke in (currentTool as Eraser).checkForOverlappingStrokes(
-        position,
-        page.strokes,
-      )) {
-        page.strokes.remove(stroke);
-      }
+      _eraseAt(position, page);
       removeExcessPages();
     } else if (currentTool is Select) {
       final select = currentTool as Select;
@@ -609,12 +922,7 @@ class EditorState extends State<Editor> {
       (currentTool as Pen).onDragUpdate(position, currentPressure);
       page.redrawStrokes();
     } else if (currentTool is Eraser) {
-      for (final stroke in (currentTool as Eraser).checkForOverlappingStrokes(
-        position,
-        page.strokes,
-      )) {
-        page.strokes.remove(stroke);
-      }
+      _eraseAt(position, page);
       page.redrawStrokes();
       removeExcessPages();
     } else if (currentTool is Select) {
@@ -665,21 +973,41 @@ class EditorState extends State<Editor> {
           ),
         );
       } else if (currentTool is Eraser) {
-        final erased = (currentTool as Eraser).onDragEnd();
+        (currentTool as Eraser).previewPosition = null;
+        final erased = List<Stroke>.from(_erasedStrokes);
+        final added = List<Stroke>.from(_addedStrokes);
+        _erasedStrokes.clear();
+        _addedStrokes.clear();
+
         if (stylusButtonWasPressed || stows.disableEraserAfterUse.value) {
           // restore previous tool
           stylusButtonWasPressed = false;
           currentTool = _lastNonEraserTool;
         }
-        if (erased.isEmpty) return;
-        history.recordChange(
-          EditorHistoryItem(
-            type: .erase,
-            pageIndex: dragPageIndex!,
-            strokes: erased,
-            images: [],
-          ),
-        );
+        if (erased.isEmpty && added.isEmpty) return;
+
+        // 先记"删掉的"、再记"新生成的"：撤销是逆序执行的，
+        // 于是会先收走新生成的那几段、再把原来的整条放回去，正好还原。
+        if (erased.isNotEmpty) {
+          history.recordChange(
+            EditorHistoryItem(
+              type: .erase,
+              pageIndex: dragPageIndex!,
+              strokes: erased,
+              images: [],
+            ),
+          );
+        }
+        if (added.isNotEmpty) {
+          history.recordChange(
+            EditorHistoryItem(
+              type: .draw,
+              pageIndex: dragPageIndex!,
+              strokes: added,
+              images: [],
+            ),
+          );
+        }
       } else if (currentTool is Select) {
         if (moveOffset == .zero) return;
         final select = currentTool as Select;
@@ -911,13 +1239,16 @@ class EditorState extends State<Editor> {
     history.markLastChangeAsSaved();
   }
 
-  Future<void> saveToFile() async {
+  /// [force] 用于「大纲」这类不进 undo 历史、但必须落盘的改动。
+  Future<void> saveToFile({bool force = false}) async {
     if (coreInfo.readOnly) return;
 
     switch (savingState.value) {
       case .saved:
         // avoid saving if nothing has changed
-        return;
+        if (!force) return;
+        _delayedSaveTimer?.cancel();
+        savingState.value = .saving;
       case .saving:
         // avoid saving if already saving
         log.warning('saveToFile() called while already saving');
@@ -927,7 +1258,9 @@ class EditorState extends State<Editor> {
         _delayedSaveTimer?.cancel();
         savingState.value = .saving;
     }
-    if (history.isCurrentStateSaved) return cancelAutosaveAndMarkSaved();
+    if (!force && history.isCurrentStateSaved) {
+      return cancelAutosaveAndMarkSaved();
+    }
 
     await _renameFileNow();
 
@@ -1086,6 +1419,27 @@ class EditorState extends State<Editor> {
   /// Returns the number of photos picked.
   ///
   /// If [photoInfos] is provided, it will be used instead of the file picker.
+  /// 调起相机拍一张照片，确认后直接插进当前笔记。
+  ///
+  /// 走的就是和「照片」按钮同一条路：拿到字节后包成 `_PhotoInfo` 交给 `_pickPhotos`，
+  /// 所以插入位置、可拖动、可缩放这些行为完全一致。
+  Future<void> takePhoto() async {
+    if (coreInfo.readOnly) return;
+
+    final XFile? shot = await ImagePicker().pickImage(
+      source: ImageSource.camera,
+      imageQuality: 95,
+    );
+    if (shot == null) return; // 用户取消了
+
+    final bytes = await shot.readAsBytes();
+    final extension = p.extension(shot.path).toLowerCase();
+
+    await _pickPhotos([
+      (bytes: bytes, extension: extension.isEmpty ? '.jpg' : extension),
+    ]);
+  }
+
   Future<int> _pickPhotos([List<_PhotoInfo>? photoInfos]) async {
     if (coreInfo.readOnly) return 0;
 
@@ -1357,6 +1711,335 @@ class EditorState extends State<Editor> {
     }
   }
 
+  /// Exports the current note as a Markdown file.
+  ///
+  /// Text is converted from the note's Quill deltas. Handwriting is vector
+  /// data with no textual form, so [MarkdownExporter] reports it as a comment
+  /// rather than letting it vanish silently.
+  ///
+  /// Besides the usual share sheet, a copy is left in the app's external files
+  /// directory. That path is readable over adb, so a desktop script can collect
+  /// exports without anyone tapping through the share sheet every time.
+  Future exportAsMarkdown(BuildContext context) async {
+    final markdown = MarkdownExporter.generateMarkdown(coreInfo);
+    final bytes = Uint8List.fromList(utf8.encode(markdown));
+
+    await _leaveMarkdownCopyBehind('${coreInfo.fileName}.md', bytes);
+
+    if (!context.mounted) return;
+    await FileManager.exportFile(
+      '${coreInfo.fileName}.md',
+      bytes,
+      context: context,
+    );
+  }
+
+  /// Writes [bytes] to `<external files dir>/exports/[fileName]`.
+  ///
+  /// Failures are logged and swallowed on purpose: not managing to leave a copy
+  /// behind must never stop the export from reaching the share sheet.
+  Future<void> _leaveMarkdownCopyBehind(String fileName, Uint8List bytes) async {
+    try {
+      final externalDir = await getExternalStorageDirectory();
+      if (externalDir == null) return;
+      final exportsDir = Directory('${externalDir.path}/exports');
+      await exportsDir.create(recursive: true);
+      await File('${exportsDir.path}/$fileName').writeAsBytes(bytes);
+      log.info('Markdown copy left at ${exportsDir.path}/$fileName');
+    } catch (e, st) {
+      log.warning('Could not leave a Markdown copy behind', e, st);
+    }
+  }
+
+  /// AppBar 里的笔记名（可编辑）。工具栏来这一行时要和它并排，所以抽出来复用。
+  Widget _buildFilenameField() {
+    if (widget.customTitle != null) return Text(widget.customTitle!);
+    return Form(
+      key: _filenameFormKey,
+      autovalidateMode: AutovalidateMode.onUserInteraction,
+      child: TextFormField(
+        decoration: const InputDecoration(border: InputBorder.none),
+        controller: filenameTextEditingController,
+        onChanged: renameFile,
+        autofocus: needsNaming,
+        validator: _validateFilenameTextField,
+      ),
+    );
+  }
+
+  // ── 把工具栏拖到任意一条边 ──────────────────────────────
+
+  /// 返回离 [local] 最近的那条屏幕边。
+  AxisDirection _nearestScreenEdge(Offset local, Size size) {
+    if (size.isEmpty) return AxisDirection.down;
+
+    final toLeft = local.dx;
+    final toRight = size.width - local.dx;
+    final toTop = local.dy;
+    final toBottom = size.height - local.dy;
+
+    var best = AxisDirection.left;
+    var bestDistance = toLeft;
+    if (toRight < bestDistance) {
+      best = AxisDirection.right;
+      bestDistance = toRight;
+    }
+    if (toTop < bestDistance) {
+      best = AxisDirection.up;
+      bestDistance = toTop;
+    }
+    if (toBottom < bestDistance) {
+      best = AxisDirection.down;
+    }
+    return best;
+  }
+
+  /// 把全局坐标换算成 **body 内**的坐标，并顺手更新吸附目标。
+  ///
+  /// 基准必须和拖动覆盖层一致（都在 body 的 Stack 里），否则圆会整体偏移一个 AppBar 的高度。
+  void _trackToolbarDrag(Offset globalPosition) {
+    final box = _editorBodyKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+
+    final local = box.globalToLocal(globalPosition);
+    final wasDragging = _isToolbarDragging;
+    setState(() {
+      _isToolbarDragging = true;
+      _toolbarDragLocal = local;
+      _toolbarSnapTarget = _nearestScreenEdge(local, box.size);
+    });
+
+    // 长按按钮时按钮的 Tooltip 会一起弹出来，进入拖动后把它收掉
+    if (!wasDragging) Tooltip.dismissAllToolTips();
+  }
+
+  void _onToolbarPanStart(DragStartDetails details) =>
+      _trackToolbarDrag(details.globalPosition);
+
+  void _onToolbarPanUpdate(DragUpdateDetails details) =>
+      _trackToolbarDrag(details.globalPosition);
+
+  void _onToolbarPanEnd(DragEndDetails details) => _finishToolbarDrag();
+
+  // ── 长按工具栏把它拎起来（Listener 版，绕开 Tooltip 的抢夺）──
+
+  void _onToolbarPointerDown(PointerDownEvent event) {
+    _toolbarPressStart = event.position;
+    _toolbarLongPressTimer?.cancel();
+    _toolbarLongPressTimer = Timer(_toolbarLongPressDelay, () {
+      if (!mounted || _isToolbarDragging) return;
+      _trackToolbarDrag(event.position);
+      HapticFeedback.mediumImpact();
+    });
+  }
+
+  void _onToolbarPointerMove(PointerMoveEvent event) {
+    if (_isToolbarDragging) {
+      _trackToolbarDrag(event.position);
+      return;
+    }
+    // 还没长按成功就滑动了 → 用户想的是点击/滚动，取消这次长按
+    final start = _toolbarPressStart;
+    if (start != null &&
+        (event.position - start).distance > _toolbarLongPressSlop) {
+      _toolbarLongPressTimer?.cancel();
+    }
+  }
+
+  void _onToolbarPointerUp(PointerEvent event) {
+    _toolbarLongPressTimer?.cancel();
+    _toolbarPressStart = null;
+    if (_isToolbarDragging) _finishToolbarDrag();
+  }
+
+  void _finishToolbarDrag() {
+    final target = _toolbarSnapTarget;
+    if (target != null && target != stows.editorToolbarAlignment.value) {
+      stows.editorToolbarAlignment.value = target;
+    }
+    setState(() {
+      _isToolbarDragging = false;
+      _toolbarSnapTarget = null;
+    });
+  }
+
+  /// 工具栏「看不见」的时候，在那条边上留一个明显的把手：点一下把工具栏叫回来。
+  ///
+  /// 要同时管两种情况：用户手动收起的，和**全屏模式下被自动折叠的**。
+  /// 后者是上游行为，而「切换全屏 (F11)」按钮偏偏就在工具栏里 —— 工具栏一折叠，
+  /// 退出全屏的入口也跟着没了，人就被锁死在里面了（实测踩到过）。
+  /// 所以点这个把手时：收起状态就展开，全屏状态就顺手退出全屏。
+  Widget _buildToolbarCollapsedBar(BuildContext context) {
+    final colorScheme = ColorScheme.of(context);
+    final alignment = stows.editorToolbarAlignment.value;
+    final horizontal =
+        alignment == AxisDirection.up || alignment == AxisDirection.down;
+    final icon = switch (alignment) {
+      AxisDirection.up => Icons.keyboard_arrow_down,
+      AxisDirection.down => Icons.keyboard_arrow_up,
+      AxisDirection.left => Icons.keyboard_arrow_right,
+      AxisDirection.right => Icons.keyboard_arrow_left,
+    };
+    return SafeArea(
+      child: Center(
+        child: Tooltip(
+          message: t.editor.showToolbar,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              setState(() => _toolbarCollapsed = false);
+              // 全屏导致的隐藏：光清掉「收起」标记没用，得真的退出全屏
+              if (DynamicMaterialApp.isFullscreen &&
+                  !stows.editorToolbarShowInFullscreen.value) {
+                DynamicMaterialApp.setFullscreen(false, updateSystem: true);
+              }
+            },
+            child: Padding(
+              // 点击区域比看得见的条大一圈，免得点不中
+              padding: const EdgeInsets.all(12),
+              child: Container(
+                width: horizontal ? 180 : 36,
+                height: horizontal ? 36 : 180,
+                decoration: BoxDecoration(
+                  color: colorScheme.surface.withValues(alpha: 0.95),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: colorScheme.primary.withValues(alpha: 0.6),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.15),
+                      blurRadius: 6,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: Icon(icon, size: 20, color: colorScheme.primary),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 拖动中覆盖在编辑页上的：四条边的提示条 + 跟着手指走的圆。
+  Widget _buildToolbarDragOverlay(BuildContext context) {
+    final colorScheme = ColorScheme.of(context);
+    const inset = 6.0;
+    const thickness = _toolbarSnapBarThickness;
+    const radius = _toolbarDragCircleSize / 2;
+
+    return Positioned.fill(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final size = constraints.biggest;
+
+          // 只有真的贴近某条边时才给提示；在半空中拖动时屏幕上干干净净
+          final target = _toolbarSnapTarget;
+          final showSnapHint =
+              target != null &&
+              _distanceToNearestEdge(_toolbarDragLocal, size) <=
+                  _toolbarSnapShowDistance;
+
+          return Stack(
+            children: [
+              if (showSnapHint)
+                _buildSnapBar(
+                  target,
+                  size,
+                  colorScheme,
+                  inset: inset,
+                  thickness: thickness,
+                ),
+              Positioned(
+                left: _toolbarDragLocal.dx - radius,
+                // 圆挂在手指正下方，否则会被手指整个盖住
+                top: _toolbarDragLocal.dy + _toolbarDragCircleGap,
+                width: _toolbarDragCircleSize,
+                height: _toolbarDragCircleSize,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colorScheme.primary,
+                      shape: BoxShape.circle,
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 10,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Icon(
+                        Icons.drag_indicator,
+                        color: colorScheme.onPrimary,
+                        size: 28,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// 当前手指位置到最近那条边的距离。
+  double _distanceToNearestEdge(Offset local, Size size) {
+    if (size.isEmpty) return double.infinity;
+    var nearest = local.dx;
+    if (size.width - local.dx < nearest) nearest = size.width - local.dx;
+    if (local.dy < nearest) nearest = local.dy;
+    if (size.height - local.dy < nearest) nearest = size.height - local.dy;
+    return nearest;
+  }
+
+  /// 靠近哪条边，就在那条边上画一条蓝色提示条。
+  Widget _buildSnapBar(
+    AxisDirection edge,
+    Size size,
+    ColorScheme colorScheme, {
+    required double inset,
+    required double thickness,
+  }) {
+    final (left, top, width, height) = switch (edge) {
+      AxisDirection.up => (inset, inset, size.width - inset * 2, thickness),
+      AxisDirection.down => (
+        inset,
+        size.height - inset - thickness,
+        size.width - inset * 2,
+        thickness,
+      ),
+      AxisDirection.left => (inset, inset, thickness, size.height - inset * 2),
+      AxisDirection.right => (
+        size.width - inset - thickness,
+        inset,
+        thickness,
+        size.height - inset * 2,
+      ),
+    };
+
+    return Positioned(
+      left: left,
+      top: top,
+      width: width,
+      height: height,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colorScheme.primary,
+            borderRadius: BorderRadius.circular(thickness / 2),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = ColorScheme.of(context);
@@ -1400,6 +2083,9 @@ class EditorState extends State<Editor> {
         );
       },
       transformationController: _transformationController,
+      isInfiniteCanvas: coreInfo.isInfiniteCanvas,
+      // 无边画布长大之后重建一次，让 Canvas 的 SizedBox 跟上新尺寸
+      onCanvasResize: _onInfiniteCanvasResized,
     );
 
     final readonlyBanner = ReadOnlyBanner(
@@ -1409,13 +2095,14 @@ class EditorState extends State<Editor> {
           : null,
     );
 
-    final Widget toolbar = Collapsible(
+    final Widget toolbarBar = Collapsible(
       axis: isToolbarVertical
           ? CollapsibleAxis.horizontal
           : CollapsibleAxis.vertical,
       collapsed:
-          DynamicMaterialApp.isFullscreen &&
-          !stows.editorToolbarShowInFullscreen.value,
+          _toolbarCollapsed ||
+          (DynamicMaterialApp.isFullscreen &&
+              !stows.editorToolbarShowInFullscreen.value),
       maintainState: true,
       child: SafeArea(
         bottom: stows.editorToolbarAlignment.value != AxisDirection.up,
@@ -1578,17 +2265,57 @@ class EditorState extends State<Editor> {
             lastSeenPointerCount = 0;
           },
           pickPhoto: _pickPhotos,
+          takePhoto: takePhoto,
+          insertTextBox: insertTextBox,
+          onEraserChanged: () {
+            if (mounted) setState(() {});
+          },
           paste: paste,
           exportAsSba: exportAsSba,
           exportAsPdf: exportAsPdf,
           exportAsPng: exportAsPng,
+          exportAsMarkdown: exportAsMarkdown,
+          // TEMP 诊断：先关掉「工具栏拖到任意一条边」，验证它是不是元凶
+          // onToolbarDragStart: _onToolbarPanStart,
+          // onToolbarDragUpdate: _onToolbarPanUpdate,
+          // onToolbarDragEnd: _onToolbarPanEnd,
         ),
       ),
     );
 
-    final Widget body;
+    // 长按工具栏任意位置即可开始拖动：它会收成一个圆跟手走，
+    // 松手后吸附到最近的那条边。
+    final Widget toolbar = Listener(
+      // 这里必须用 Listener 而不是 GestureDetector：Listener 不参与手势竞技场，
+      // 所以按在按钮上也能收到事件。GestureDetector 的长按会被按钮的 Tooltip
+      // 抢走 —— Tooltip 的识别器位置更深，竞技场里它赢。
+      onPointerDown: _onToolbarPointerDown,
+      onPointerMove: _onToolbarPointerMove,
+      onPointerUp: _onToolbarPointerUp,
+      onPointerCancel: _onToolbarPointerUp,
+      child: IgnorePointer(
+        // 缩成圆之后别让按钮再接事件，否则松手会在原地误触一个按钮
+        ignoring: _isToolbarDragging,
+        child: Visibility(
+          visible: !_isToolbarDragging,
+          maintainState: true,
+          maintainAnimation: true,
+          maintainSize: true,
+          child: toolbarBar,
+        ),
+      ),
+    );
+
+    // 横屏且工具栏贴在上面时，把它挪进 AppBar 那一行：这样它和笔记名在同一水平线，
+    // 位置更高，画布也多还出一行高度。否则它自己占一行，位置会偏低。
+    final putToolbarInAppBar =
+        !DynamicMaterialApp.isFullscreen &&
+        MediaQuery.orientationOf(context) == Orientation.landscape &&
+        stows.editorToolbarAlignment.value == AxisDirection.up;
+
+    final Widget layoutBody;
     if (isToolbarVertical) {
-      body = Row(
+      layoutBody = Row(
         textDirection: stows.editorToolbarAlignment.value == AxisDirection.left
             ? .ltr
             : .rtl,
@@ -1605,18 +2332,30 @@ class EditorState extends State<Editor> {
         ],
       );
     } else {
-      body = Column(
+      layoutBody = Column(
         verticalDirection:
             stows.editorToolbarAlignment.value == AxisDirection.up
             ? VerticalDirection.up
             : VerticalDirection.down,
         children: [
           Expanded(child: canvas),
-          toolbar,
+          if (!putToolbarInAppBar) toolbar,
           readonlyBanner,
         ],
       );
     }
+
+    // 拖动工具栏时，在最上层画一个跟手的圆和贴边提示
+    final Widget body = Stack(
+      key: _editorBodyKey,
+      fit: StackFit.expand,
+      children: [
+        layoutBody,
+        if (_isToolbarDragging) _buildToolbarDragOverlay(context),
+        // 右下角的页码胶囊：大文档里用来知道「我在第几页」并快速跳页
+        _buildPagePill(context),
+      ],
+    );
 
     return ValueListenableBuilder(
       valueListenable: savingState,
@@ -1645,21 +2384,17 @@ class EditorState extends State<Editor> {
             ? null
             : AppBar(
                 toolbarHeight: kToolbarHeight,
-                title: widget.customTitle != null
-                    ? Text(widget.customTitle!)
-                    : Form(
-                        key: _filenameFormKey,
-                        autovalidateMode: AutovalidateMode.onUserInteraction,
-                        child: TextFormField(
-                          decoration: const InputDecoration(
-                            border: InputBorder.none,
-                          ),
-                          controller: filenameTextEditingController,
-                          onChanged: renameFile,
-                          autofocus: needsNaming,
-                          validator: _validateFilenameTextField,
-                        ),
-                      ),
+                // 横屏贴顶时工具栏住进标题这一行，但必须和标题**并排分空间**：
+                // 放进 flexibleSpace 的话，标题输入框的宽度会盖住整条工具栏，
+                // 手势全被输入框吃掉（连软键盘都会被点出来）。
+                title: putToolbarInAppBar
+                    ? Row(
+                        children: [
+                          Expanded(child: _buildFilenameField()),
+                          toolbar,
+                        ],
+                      )
+                    : _buildFilenameField(),
                 leading: SaveIndicator(
                   savingState: savingState,
                   triggerSave: saveToFile,
@@ -1699,6 +2434,16 @@ class EditorState extends State<Editor> {
                       );
                     },
                   ),
+                  // 只有背景是 PDF 的笔记才有可跳转的页，别的笔记不显示这个入口
+                  if (_pdfPageToEditorPage().isNotEmpty)
+                    IconButton(
+                      icon: const AdaptiveIcon(
+                        icon: Icons.list_alt,
+                        cupertinoIcon: CupertinoIcons.list_bullet,
+                      ),
+                      tooltip: t.editor.outline.title,
+                      onPressed: _showOutlinePanel,
+                    ),
                   IconButton(
                     icon: const AdaptiveIcon(
                       icon: Icons.more_vert,
@@ -1718,9 +2463,13 @@ class EditorState extends State<Editor> {
                 ],
               ),
         body: body,
-        floatingActionButton:
-            (DynamicMaterialApp.isFullscreen &&
-                !stows.editorToolbarShowInFullscreen.value)
+        // 只要在全屏，就一定给一个「退出全屏」的浮动按钮。
+        //
+        // 上游这里额外要求「设置里没开『全屏时显示编辑菜单栏』」，理由是
+        // 「工具栏反正会显示，用不着出口」。但只要工具栏因为任何原因没显示出来
+        // （折叠了、布局出问题），用户就既看不到工具栏、又点不到这个按钮，
+        // 直接被锁死在全屏里没法出来 —— 实测踩到过。所以去掉那个额外条件。
+        floatingActionButton: DynamicMaterialApp.isFullscreen
             ? FloatingActionButton(
                 shape: platform.isCupertino ? const CircleBorder() : null,
                 onPressed: () {

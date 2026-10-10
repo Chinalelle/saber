@@ -10,6 +10,7 @@ class ExportBar extends StatefulWidget {
     required this.exportAsSba,
     required this.exportAsPdf,
     required this.exportAsPng,
+    required this.exportAsMarkdown,
   });
 
   final Axis axis;
@@ -19,6 +20,7 @@ class ExportBar extends StatefulWidget {
   final Future Function(BuildContext)? exportAsSba;
   final Future Function(BuildContext)? exportAsPdf;
   final Future Function(BuildContext)? exportAsPng;
+  final Future Function(BuildContext)? exportAsMarkdown;
 
   @override
   State<ExportBar> createState() => _ExportBarState();
@@ -82,6 +84,14 @@ class _ExportBarState extends State<ExportBar> {
           return TextButton(
             onPressed: _onPressed(widget.exportAsPng, context),
             child: _buttonChild(widget.exportAsPng, 'PNG'),
+          );
+        },
+      ),
+      Builder(
+        builder: (context) {
+          return TextButton(
+            onPressed: _onPressed(widget.exportAsMarkdown, context),
+            child: _buttonChild(widget.exportAsMarkdown, 'MD'),
           );
         },
       ),

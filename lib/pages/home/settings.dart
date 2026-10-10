@@ -17,6 +17,7 @@ import 'package:saber/components/settings/settings_selection.dart';
 import 'package:saber/components/settings/settings_sentry.dart';
 import 'package:saber/components/settings/settings_subtitle.dart';
 import 'package:saber/components/settings/settings_switch.dart';
+import 'package:saber/components/settings/settings_text_input.dart';
 import 'package:saber/components/settings/update_manager.dart';
 import 'package:saber/components/theming/adaptive_alert_dialog.dart';
 import 'package:saber/components/theming/adaptive_toggle_buttons.dart';
@@ -31,6 +32,8 @@ import 'package:saber/data/routes.dart';
 import 'package:saber/data/sentry/sentry_init.dart';
 import 'package:saber/data/tools/shape_pen.dart';
 import 'package:saber/i18n/strings.g.dart';
+import 'package:sbn/canvas_background_pattern.dart';
+import 'package:sbn/canvas_texture.dart';
 import 'package:stow/stow.dart';
 
 class const SettingsPage({super.key}) extends StatefulWidget {
@@ -92,6 +95,31 @@ abstract class _SettingsStows {
     stows.editorToolbarAlignment,
     (AxisDirection value) => value.index,
     (int value) => AxisDirection.values[value],
+  );
+
+  static final infiniteCanvasPattern = TransformedStow(
+    stows.infiniteCanvasPattern,
+    (CanvasBackgroundPattern value) => value.index,
+    (int value) => CanvasBackgroundPattern.values[value],
+  );
+
+  static final infiniteCanvasTexture = TransformedStow(
+    stows.infiniteCanvasTexture,
+    (CanvasTexture value) => value.index,
+    (int value) => CanvasTexture.values[value],
+  );
+
+  /// AI 的两个数字设置：内部存 int，界面上是文本框，所以来回转成 String。
+  static final aiPagesPerBatch = TransformedStow(
+    stows.aiPagesPerBatch,
+    (int value) => '$value',
+    (String value) => int.tryParse(value.trim()) ?? stows.aiPagesPerBatch.value,
+  );
+
+  static final aiRenderLongSide = TransformedStow(
+    stows.aiRenderLongSide,
+    (int value) => '$value',
+    (String value) => int.tryParse(value.trim()) ?? stows.aiRenderLongSide.value,
   );
 }
 
@@ -419,7 +447,120 @@ class _SettingsPageState extends State<SettingsPage> {
                   },
                 ),
 
+                SettingsSubtitle(
+                  subtitle: t.settings.prefCategories.aiOutline,
+                ),
+                // API Key：只存在本机，不写进笔记文件
+                SettingsTextInput(
+                  title: t.settings.prefLabels.aiApiKey,
+                  subtitle: t.settings.prefDescriptions.aiApiKey,
+                  icon: Icons.key_outlined,
+                  pref: stows.aiApiKey,
+                  obscureText: true,
+                  hintText: 'sk-...',
+                ),
+                SettingsTextInput(
+                  title: t.settings.prefLabels.aiBaseUrl,
+                  subtitle: t.settings.prefDescriptions.aiBaseUrl,
+                  icon: Icons.link,
+                  pref: stows.aiBaseUrl,
+                  keyboardType: TextInputType.url,
+                  hintText: Stows.defaultAiBaseUrl,
+                ),
+                SettingsTextInput(
+                  title: t.settings.prefLabels.aiModel,
+                  subtitle: t.settings.prefDescriptions.aiModel,
+                  icon: Icons.smart_toy_outlined,
+                  pref: stows.aiModel,
+                  hintText: Stows.defaultAiModel,
+                ),
+                SettingsTextInput(
+                  title: t.settings.prefLabels.aiPagesPerBatch,
+                  subtitle: t.settings.prefDescriptions.aiPagesPerBatch,
+                  icon: Icons.layers_outlined,
+                  pref: _SettingsStows.aiPagesPerBatch,
+                  keyboardType: TextInputType.number,
+                ),
+                SettingsTextInput(
+                  title: t.settings.prefLabels.aiRenderLongSide,
+                  subtitle: t.settings.prefDescriptions.aiRenderLongSide,
+                  icon: Icons.photo_size_select_large_outlined,
+                  pref: _SettingsStows.aiRenderLongSide,
+                  keyboardType: TextInputType.number,
+                ),
+
+                SettingsSubtitle(
+                  subtitle: t.settings.prefCategories.infiniteCanvas,
+                ),
+                // 背景颜色：点开可以选任意颜色（默认米白）
+                SettingsColor(
+                  title: t.settings.prefLabels.infiniteCanvasColor,
+                  icon: Icons.palette_outlined,
+                  pref: stows.infiniteCanvasColor,
+                ),
+                // 背景格式：无 / 方格 / 点阵
+                SettingsSelection(
+                  title: t.settings.prefLabels.infiniteCanvasPattern,
+                  pref: _SettingsStows.infiniteCanvasPattern,
+                  optionsWidth: 96,
+                  options: [
+                    ToggleButtonsOption(
+                      CanvasBackgroundPattern.none.index,
+                      Text(t.settings.infiniteCanvasPatterns.none),
+                    ),
+                    ToggleButtonsOption(
+                      CanvasBackgroundPattern.grid.index,
+                      Text(t.settings.infiniteCanvasPatterns.grid),
+                    ),
+                    ToggleButtonsOption(
+                      CanvasBackgroundPattern.dots.index,
+                      Text(t.settings.infiniteCanvasPatterns.dots),
+                    ),
+                  ],
+                ),
+                // 背景纹理：光滑 / 纸张
+                SettingsSelection(
+                  title: t.settings.prefLabels.infiniteCanvasTexture,
+                  pref: _SettingsStows.infiniteCanvasTexture,
+                  optionsWidth: 96,
+                  options: [
+                    ToggleButtonsOption(
+                      CanvasTexture.smooth.index,
+                      Text(t.settings.infiniteCanvasTextures.smooth),
+                    ),
+                    ToggleButtonsOption(
+                      CanvasTexture.paper.index,
+                      Text(t.settings.infiniteCanvasTextures.paper),
+                    ),
+                  ],
+                ),
+                // 方格／点阵的疏密：数字越小越密
+                SettingsSelection<double>(
+                  title: t.settings.prefLabels.gridDensity,
+                  subtitle: t.settings.prefDescriptions.gridDensity,
+                  icon: Icons.grid_on,
+                  pref: stows.gridDensity,
+                  options: const <ToggleButtonsOption<double>>[
+                    ToggleButtonsOption(0.5, Text('0.5×')),
+                    ToggleButtonsOption(0.7, Text('0.7×')),
+                    ToggleButtonsOption(1.0, Text('1×')),
+                    ToggleButtonsOption(1.5, Text('1.5×')),
+                  ],
+                ),
+
                 SettingsSubtitle(subtitle: t.settings.prefCategories.editor),
+                SettingsSelection<double>(
+                  title: t.settings.prefLabels.textBoxOpacity,
+                  subtitle: t.settings.prefDescriptions.textBoxOpacity,
+                  icon: Icons.opacity,
+                  pref: stows.textBoxOpacity,
+                  options: const <ToggleButtonsOption<double>>[
+                    ToggleButtonsOption(0.0, Text('0%')),
+                    ToggleButtonsOption(0.3, Text('30%')),
+                    ToggleButtonsOption(0.6, Text('60%')),
+                    ToggleButtonsOption(0.9, Text('90%')),
+                  ],
+                ),
                 SettingsSelection(
                   title: t.settings.prefLabels.editorToolbarAlignment,
                   subtitle:
