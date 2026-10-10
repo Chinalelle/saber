@@ -72,6 +72,7 @@ dependencies:
   pdf: ^3.8.4
   share_plus: ^13.3.0
   file_picker: ^13.0.0
+  image_picker: ^1.1.2
   android_file_picker:
 
   regexed_validator: ^2.0.0+1
@@ -161,11 +162,11 @@ dependencies:
   dynamic_yaru: ^0.2.0
   image: ^4.8.0
   pool: ^1.5.2
+  flutter_math_fork: ^0.7.4
+  xml: ^6.6.1
 
 dev_dependencies:
   flutter_test:
-    sdk: flutter
-  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to

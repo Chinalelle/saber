@@ -63,6 +63,8 @@ sentry-wizard
 coverage/
 /test-results.json
 /test-results.xml
+# golden 测试失败时的对比图（体积大、每次跑测试都会重新生成）
+/test/failures/
 
 # temp files for fdroid pubspec.lock
 /tmpfdroid/
