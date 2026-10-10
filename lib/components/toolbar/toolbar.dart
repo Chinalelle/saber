@@ -12,6 +12,7 @@ import 'package:saber/components/theming/adaptive_icon.dart';
 import 'package:saber/components/theming/dynamic_material_app.dart';
 import 'package:saber/components/theming/uni_icon.dart';
 import 'package:saber/components/toolbar/color_bar.dart';
+import 'package:saber/components/toolbar/eraser_modal.dart';
 import 'package:saber/components/toolbar/export_bar.dart';
 import 'package:saber/components/toolbar/pen_modal.dart';
 import 'package:saber/components/toolbar/selection_bar.dart';
@@ -28,6 +29,7 @@ import 'package:saber/data/tools/pen.dart';
 import 'package:saber/data/tools/pencil.dart';
 import 'package:saber/data/tools/select.dart';
 import 'package:saber/i18n/strings.g.dart';
+import 'package:sbn/eraser_mode.dart';
 
 class Toolbar extends StatefulWidget {
   const new({
@@ -51,6 +53,14 @@ class Toolbar extends StatefulWidget {
     required this.exportAsSba,
     required this.exportAsPdf,
     required this.exportAsPng,
+    required this.exportAsMarkdown,
+    this.onToolbarDragStart,
+    this.onToolbarDragUpdate,
+    this.onToolbarDragEnd,
+    this.takePhoto,
+    this.insertTextBox,
+    this.onEraserChanged,
+    this.onCollapse,
   });
 
   final bool readOnly;
@@ -72,6 +82,19 @@ class Toolbar extends StatefulWidget {
 
   final VoidCallback pickPhoto;
 
+  /// 调起相机拍一张，确认后直接把照片插进笔记。
+  final VoidCallback? takePhoto;
+
+  /// 在当前页插一个浮动文本框。
+  final VoidCallback? insertTextBox;
+
+  /// 橡皮擦面板改了模式/大小时通知编辑页重绘。
+  final VoidCallback? onEraserChanged;
+
+  /// 点一下把工具栏收成边缘的一条细条（想腾出屏幕写字时用）。
+  /// 为空时不显示这个按钮。
+  final VoidCallback? onCollapse;
+
   final VoidCallback paste;
 
   final VoidCallback duplicateSelection;
@@ -80,6 +103,12 @@ class Toolbar extends StatefulWidget {
   final Future Function(BuildContext)? exportAsSba;
   final Future Function(BuildContext)? exportAsPdf;
   final Future Function(BuildContext)? exportAsPng;
+  final Future Function(BuildContext)? exportAsMarkdown;
+
+  /// 拖动工具栏左端的小把手时回调，用来把工具栏拖到别的边去。
+  final void Function(DragStartDetails details)? onToolbarDragStart;
+  final void Function(DragUpdateDetails details)? onToolbarDragUpdate;
+  final void Function(DragEndDetails details)? onToolbarDragEnd;
 
   @override
   State<Toolbar> createState() => _ToolbarState();
@@ -152,8 +181,13 @@ class _ToolbarState extends State<Toolbar> {
   }
 
   void toggleEraser() {
-    toolOptionsType.value = .hide;
-    widget.setTool(Eraser()); // this toggles eraser
+    final wasEraser = widget.currentTool is Eraser;
+    widget.setTool(Eraser.currentEraser); // this toggles eraser
+    // 点橡皮擦就把它那排模式选项亮出来（原来这里是 .hide，等于点完什么都不给看）
+    toolOptionsType.value =
+        wasEraser && toolOptionsType.value == ToolOptions.eraser
+        ? ToolOptions.hide
+        : ToolOptions.eraser;
   }
 
   void toggleColorOptions() {
@@ -198,6 +232,9 @@ class _ToolbarState extends State<Toolbar> {
           ? .select
           : .hide;
     }
+    // 注意：这里**不能**再写 "当前是橡皮擦就把面板设成 .eraser" ——
+    // 那样每次重建都会把面板又拽回来，用户在面板里选完模式后收不起来。
+    // 唤出面板的职责交给 toggleEraser()。
 
     final bars = <Widget>[
       ValueListenableBuilder(
@@ -218,6 +255,7 @@ class _ToolbarState extends State<Toolbar> {
           exportAsSba: widget.exportAsSba,
           exportAsPdf: widget.exportAsPdf,
           exportAsPng: widget.exportAsPng,
+          exportAsMarkdown: widget.exportAsMarkdown,
         ),
       ),
       ValueListenableBuilder(
@@ -242,6 +280,15 @@ class _ToolbarState extends State<Toolbar> {
               .pencil => PenModal(
                 getTool: () => Pencil.currentPencil,
                 setTool: widget.setTool,
+              ),
+              .eraser => EraserModal(
+                getTool: () => Eraser.currentEraser,
+                onChanged: () {
+                  // 选完模式就把选择栏收起来
+                  this.toolOptionsType.value = ToolOptions.hide;
+                  setState(() {});
+                  widget.onEraserChanged?.call();
+                },
               ),
               .select => SelectionBar(
                 duplicateSelection: widget.duplicateSelection,
@@ -454,7 +501,25 @@ class _ToolbarState extends State<Toolbar> {
                 enabled: !widget.readOnly,
                 onPressed: toggleEraser,
                 padding: buttonPadding,
-                child: const FaIcon(FontAwesomeIcons.eraser, size: 16),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const FaIcon(FontAwesomeIcons.eraser, size: 16),
+                    // 右下角标出当前用的是哪种擦子（笔迹模式不标）
+                    if (Eraser.currentEraser.mode != EraserMode.stroke)
+                      Positioned(
+                        right: -5,
+                        bottom: -5,
+                        child: Icon(
+                          Eraser.currentEraser.mode == EraserMode.square
+                              ? Icons.square
+                              : Icons.circle,
+                          size: 10,
+                          color: colorScheme.secondary,
+                        ),
+                      ),
+                  ],
+                ),
               ),
               ToolbarIconButton(
                 tooltip: t.editor.toolbar.photo,
@@ -466,6 +531,30 @@ class _ToolbarState extends State<Toolbar> {
                   cupertinoIcon: CupertinoIcons.photo,
                 ),
               ),
+              // 拍照导入：调起相机，拍完确认后直接插进笔记
+              if (widget.takePhoto != null)
+                ToolbarIconButton(
+                  tooltip: t.editor.toolbar.takePhoto,
+                  enabled: !widget.readOnly,
+                  onPressed: widget.takePhoto,
+                  padding: buttonPadding,
+                  child: const AdaptiveIcon(
+                    icon: Icons.photo_camera,
+                    cupertinoIcon: CupertinoIcons.camera,
+                  ),
+                ),
+              // 插入浮动文本框（「无边画布」里写字靠它）
+              if (widget.insertTextBox != null)
+                ToolbarIconButton(
+                  tooltip: t.editor.toolbar.insertTextBox,
+                  enabled: !widget.readOnly,
+                  onPressed: widget.insertTextBox,
+                  padding: buttonPadding,
+                  child: const AdaptiveIcon(
+                    icon: Icons.add_box_outlined,
+                    cupertinoIcon: CupertinoIcons.textbox,
+                  ),
+                ),
               ToolbarIconButton(
                 tooltip: t.editor.toolbar.text,
                 selected: widget.textEditing,
@@ -554,7 +643,7 @@ class _ToolbarState extends State<Toolbar> {
       ),
     ];
 
-    return Flex(
+    final toolbarFlex = Flex(
       direction: isToolbarVertical ? Axis.horizontal : Axis.vertical,
       textDirection: switch (stows.editorToolbarAlignment.value) {
         AxisDirection.left => .rtl,
@@ -568,6 +657,20 @@ class _ToolbarState extends State<Toolbar> {
       },
       children: bars,
     );
+
+    if (widget.onToolbarDragStart == null) return toolbarFlex;
+
+    // 把手单独放在工具栏的「起始端」：贴上下时在左边，贴左右时在上边。
+    // 不要把它塞进 bars —— 底部工具栏的 bars 是竖排的，塞进去会被挤到正中间。
+    final handle = _ToolbarDragHandle(
+      isVertical: isToolbarVertical,
+      onDragStart: widget.onToolbarDragStart!,
+      onDragUpdate: widget.onToolbarDragUpdate,
+      onDragEnd: widget.onToolbarDragEnd,
+    );
+    return isToolbarVertical
+        ? Column(mainAxisSize: MainAxisSize.min, children: [handle, toolbarFlex])
+        : Row(mainAxisSize: MainAxisSize.min, children: [handle, toolbarFlex]);
   }
 
   @override
@@ -580,4 +683,86 @@ class _ToolbarState extends State<Toolbar> {
   }
 }
 
-enum ToolOptions { hide, pen, highlighter, pencil, select }
+/// 工具栏一端的小把手：拖动它就能把整条工具栏拖到别的边。
+class _ToolbarDragHandle extends StatelessWidget {
+  const new({
+    required this.isVertical,
+    required this.onDragStart,
+    this.onDragUpdate,
+    this.onDragEnd,
+  });
+
+  /// 工具栏目前是不是竖着排（贴在左边或右边）。
+  final bool isVertical;
+
+  final void Function(DragStartDetails details) onDragStart;
+  final void Function(DragUpdateDetails details)? onDragUpdate;
+  final void Function(DragEndDetails details)? onDragEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = ColorScheme.of(context);
+    return MouseRegion(
+      cursor: SystemMouseCursors.grab,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: onDragStart,
+        onPanUpdate: onDragUpdate,
+        onPanEnd: onDragEnd,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: RotatedBox(
+            // 竖排时整个工具栏是"转过来"的，图标也转一下才不别扭
+            quarterTurns: isVertical ? 1 : 0,
+            child: Icon(
+              Icons.drag_handle,
+              size: 20,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum ToolOptions { hide, pen, highlighter, pencil, select, eraser }
+
+/// 工具栏末端的小按钮：点一下把工具栏收成边缘的一条细条。
+///
+/// 收起来之后屏幕整块留给写字，想用工具栏时点那条细条就回来了。
+class _ToolbarCollapseButton extends StatelessWidget {
+  const new({required this.isVertical, required this.onTap});
+
+  /// 工具栏目前是不是竖着排（贴在左边或右边）。
+  final bool isVertical;
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = ColorScheme.of(context);
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Tooltip(
+          message: t.editor.hideToolbar,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: RotatedBox(
+              quarterTurns: isVertical ? 1 : 0,
+              child: Icon(
+                // 贴上下时箭头朝下（往那条边收），贴左右时转 90°
+                Icons.keyboard_arrow_down,
+                size: 20,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
