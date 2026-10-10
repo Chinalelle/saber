@@ -8,6 +8,7 @@ import 'package:perfect_freehand/perfect_freehand.dart';
 import 'package:saber/components/canvas/_circle_stroke.dart';
 import 'package:saber/components/canvas/_rectangle_stroke.dart';
 import 'package:saber/components/canvas/_stroke.dart';
+import 'package:saber/components/canvas/invert_widget.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/extensions/color_extensions.dart';
 import 'package:saber/data/tools/eraser.dart';
@@ -51,6 +52,8 @@ class CanvasPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final canvasRect = Offset.zero & size;
 
+    // 位图层垫在最下面（在笔迹之下、背景纸之上）
+    _drawBitmap(canvas, size);
     _drawHighlighterStrokes(canvas, canvasRect);
     _drawNonHighlighterStrokes(canvas);
     for (final stroke in laserStrokes) _drawLaserStroke(canvas, stroke);
@@ -77,7 +80,34 @@ class CanvasPainter extends CustomPainter {
         showPageIndicator != oldDelegate.showPageIndicator ||
         pageIndex != oldDelegate.pageIndex ||
         totalPages != oldDelegate.totalPages ||
-        currentScale != oldDelegate.currentScale;
+        currentScale != oldDelegate.currentScale ||
+        // 位图变了（异步解码完成、或刚画完一笔）也要重绘
+        page.bitmap?.image != oldDelegate.page.bitmap?.image;
+  }
+
+  /// 画「位图编辑模式」那一层（像素内容）。
+  ///
+  /// 目标矩形用 [EditorPage.size]（页面逻辑尺寸），**不能**用 [size]：
+  /// 缩略图的高度是裁剪过的，用 size 会把位图整条纵向压扁。
+  void _drawBitmap(Canvas canvas, Size size) {
+    final image = page.bitmap?.image;
+    if (image == null) return;
+
+    canvas.save();
+    // 缩略图时画布比页面矮，裁掉多出来的部分免得溢出到别的页面上去
+    canvas.clipRect(Offset.zero & size);
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      Offset.zero & page.size,
+      Paint()
+        ..filterQuality = FilterQuality.medium
+        // 深色模式下和笔迹一样反色，否则黑墨画在黑纸上看不见
+        ..colorFilter = invert
+            ? const ColorFilter.matrix(InvertWidget.invertMatrix)
+            : null,
+    );
+    canvas.restore();
   }
 
   void _drawHighlighterStrokes(Canvas canvas, Rect canvasRect) {

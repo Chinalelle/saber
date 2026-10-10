@@ -374,6 +374,34 @@ class _ToolbarState extends State<Toolbar> {
             alignment: WrapAlignment.center,
             runSpacing: 8,
             children: [
+              // 拖动把手：按住它可以把工具栏换到别的边。
+              //
+              // 必须放在这个 Wrap **里面**。放到外面再包一层 Row 的话，
+              // Wrap 会拿到「宽度无限」的约束 → 不再换行 → 整条工具栏溢出屏幕，
+              // 最右边的按钮被裁到屏幕外、点都点不着（实测踩过，
+              // 还顺带让 golden 测试报 RenderFlex overflowed）。
+              if (widget.onToolbarDragStart != null)
+                _ToolbarDragHandle(
+                  isVertical: isToolbarVertical,
+                  onDragStart: widget.onToolbarDragStart!,
+                  onDragUpdate: widget.onToolbarDragUpdate,
+                  onDragEnd: widget.onToolbarDragEnd,
+                ),
+              // 位图编辑模式开关：开着的时候，画下去的东西会固化成像素
+              ValueListenableBuilder(
+                valueListenable: stows.editorBitmapMode,
+                builder: (context, bitmapMode, _) => ToolbarIconButton(
+                  tooltip: bitmapMode
+                      ? t.editor.bitmapModeOn
+                      : t.editor.bitmapModeOff,
+                  selected: bitmapMode,
+                  enabled: !widget.readOnly,
+                  onPressed: () =>
+                      stows.editorBitmapMode.value = !bitmapMode,
+                  padding: buttonPadding,
+                  child: const Icon(Icons.grain, size: 16),
+                ),
+              ),
               ToolbarIconButton(
                 tooltip: Pen.currentPen.name,
                 selected: widget.currentTool == Pen.currentPen,
@@ -637,6 +665,12 @@ class _ToolbarState extends State<Toolbar> {
                   cupertinoIcon: CupertinoIcons.share,
                 ),
               ),
+              // 工具栏末端的小按钮：点一下把工具栏收成边缘的一条细条
+              if (widget.onCollapse != null)
+                _ToolbarCollapseButton(
+                  isVertical: isToolbarVertical,
+                  onTap: widget.onCollapse!,
+                ),
             ],
           ),
         ),
@@ -658,19 +692,9 @@ class _ToolbarState extends State<Toolbar> {
       children: bars,
     );
 
-    if (widget.onToolbarDragStart == null) return toolbarFlex;
-
-    // 把手单独放在工具栏的「起始端」：贴上下时在左边，贴左右时在上边。
-    // 不要把它塞进 bars —— 底部工具栏的 bars 是竖排的，塞进去会被挤到正中间。
-    final handle = _ToolbarDragHandle(
-      isVertical: isToolbarVertical,
-      onDragStart: widget.onToolbarDragStart!,
-      onDragUpdate: widget.onToolbarDragUpdate,
-      onDragEnd: widget.onToolbarDragEnd,
-    );
-    return isToolbarVertical
-        ? Column(mainAxisSize: MainAxisSize.min, children: [handle, toolbarFlex])
-        : Row(mainAxisSize: MainAxisSize.min, children: [handle, toolbarFlex]);
+    // 拖动把手和「收起」按钮都挂在上面那个 Wrap 的首尾，这里不再包一层
+    // Row —— 那会让 Wrap 拿到宽度无限的约束，工具栏就不再换行了。
+    return toolbarFlex;
   }
 
   @override

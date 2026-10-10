@@ -236,6 +236,10 @@ class Translations$editor$zh_Hans_CN extends Translations$editor$en {
 	@override String get pages => '页面';
 	@override String get hideToolbar => '收起工具栏';
 	@override String get showToolbar => '展开工具栏';
+	@override String get bitmapMode => '位图模式';
+	@override String get bitmapModeOn => '位图模式：已开启 —— 笔迹会固化成像素';
+	@override String get bitmapModeOff => '位图模式：已关闭 —— 笔迹仍然是可编辑的矢量';
+	@override String get bitmapModeHint => '画下去的会变成像素而不是路径，所以橡皮擦能把一条线擦掉一半。矢量层和位图层会同时显示。';
 	@override String get insertMath => '插入公式';
 	@override String get mathTex => 'LaTeX 公式';
 	@override String get mathEmpty => '先写点什么';

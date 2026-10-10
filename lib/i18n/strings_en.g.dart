@@ -331,6 +331,18 @@ class Translations$editor$en {
 	/// en: 'Show the toolbar'
 	String get showToolbar => 'Show the toolbar';
 
+	/// en: 'Bitmap mode'
+	String get bitmapMode => 'Bitmap mode';
+
+	/// en: 'Bitmap mode: on — strokes are burned into pixels'
+	String get bitmapModeOn => 'Bitmap mode: on — strokes are burned into pixels';
+
+	/// en: 'Bitmap mode: off — strokes stay editable'
+	String get bitmapModeOff => 'Bitmap mode: off — strokes stay editable';
+
+	/// en: 'Strokes are painted as pixels instead of paths, so the eraser can rub out half a line. Vector strokes and the bitmap layer are shown together.'
+	String get bitmapModeHint => 'Strokes are painted as pixels instead of paths, so the eraser can rub out half a line. Vector strokes and the bitmap layer are shown together.';
+
 	/// en: 'Insert formula'
 	String get insertMath => 'Insert formula';
 

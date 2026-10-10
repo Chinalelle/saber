@@ -17,6 +17,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:saber/components/canvas/_asset_cache.dart';
+import 'package:saber/components/canvas/_canvas_painter.dart';
 import 'package:saber/components/canvas/_stroke.dart';
 import 'package:saber/components/canvas/canvas.dart';
 import 'package:saber/components/canvas/canvas_gesture_detector.dart';
@@ -35,6 +36,7 @@ import 'package:saber/components/toolbar/editor_bottom_sheet.dart';
 import 'package:saber/components/toolbar/editor_page_manager.dart';
 import 'package:saber/components/toolbar/toolbar.dart';
 import 'package:saber/data/ai/outline_generator.dart';
+import 'package:saber/data/editor/editor_bitmap.dart';
 import 'package:saber/data/editor/editor_core_info.dart';
 import 'package:saber/data/editor/editor_exporter.dart';
 import 'package:saber/data/editor/editor_history.dart';
@@ -405,6 +407,120 @@ class EditorState extends State<Editor> {
 
   /// Creates pages until the given page index exists,
   /// plus an extra blank page
+  // ── 位图编辑模式 ─────────────────────────────────────────
+  //
+  // 开着的时候，画笔不再"记下一条可编辑的路径"，而是把这一笔固化成像素；
+  // 橡皮也不是整笔删除，而是把像素抹掉（所以能擦掉半条线）。
+  // 矢量那一套完全没动 —— 关掉开关就回到原来的手感，两者还会叠加显示。
+
+  /// 位图模式下，橡皮这一趟划过的点（页面坐标）。
+  final List<Offset> _bitmapErasePath = [];
+
+  bool get isBitmapMode => stows.editorBitmapMode.value;
+
+  /// 取某一页的位图层，没有就按页面尺寸现建一张。
+  EditorBitmap _ensureBitmap(EditorPage page) =>
+      page.bitmap ??= EditorBitmap.createFor(
+        page.size,
+        idealRatio: stows.editorBitmapPixelRatio.value,
+      );
+
+  /// 把一笔画光栅化进位图层。
+  ///
+  /// 绘制借用 [CanvasPainter] 去画这一条笔迹：高亮笔的混合模式、铅笔的
+  /// 纹理着色器、颜色反相全都原样复用，不用在这里重抄一遍。
+  Future<void> _rasterizeStrokeToBitmap(
+    EditorPage page,
+    Stroke stroke,
+  ) async {
+    final bitmap = _ensureBitmap(page);
+    final before = bitmap.cachedPng;
+
+    await bitmap.apply(
+      pageSize: page.size,
+      draw: (canvas) {
+        CanvasPainter(
+          invert: false,
+          strokes: [stroke],
+          laserStrokes: const [],
+          currentStroke: null,
+          currentSelection: null,
+          primaryColor: Theme.of(context).colorScheme.primary,
+          page: page,
+          showPageIndicator: false,
+          pageIndex: stroke.pageIndex,
+          totalPages: 1,
+          currentScale: 1,
+          defaultTextStyle: Theme.of(context).textTheme.bodyMedium!,
+        ).paint(canvas, page.size);
+      },
+    );
+
+    if (!mounted) return;
+    page.redrawStrokes();
+    history.recordChange(
+      EditorHistoryItem(
+        type: .bitmap,
+        pageIndex: stroke.pageIndex,
+        strokes: const [],
+        images: const [],
+        bitmapChange: Change(previous: before, current: bitmap.cachedPng),
+      ),
+    );
+    autosaveAfterDelay();
+  }
+
+  /// 把橡皮这一趟的轨迹从位图层上抹掉。
+  Future<void> _rasterizeEraseToBitmap(
+    EditorPage page,
+    List<Offset> points,
+    double width,
+  ) async {
+    if (points.isEmpty) return;
+    final bitmap = _ensureBitmap(page);
+    final before = bitmap.cachedPng;
+
+    await bitmap.apply(
+      pageSize: page.size,
+      draw: (canvas) {
+        final paint = Paint()
+          // clear = 把已有像素挖掉，而不是再盖一层颜色
+          ..blendMode = BlendMode.clear
+          ..color = const Color(0xFF000000)
+          ..strokeWidth = width
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..style = PaintingStyle.stroke;
+        if (points.length == 1) {
+          canvas.drawCircle(
+            points.first,
+            width / 2,
+            paint..style = PaintingStyle.fill,
+          );
+          return;
+        }
+        final path = Path()..moveTo(points.first.dx, points.first.dy);
+        for (final point in points.skip(1)) {
+          path.lineTo(point.dx, point.dy);
+        }
+        canvas.drawPath(path, paint);
+      },
+    );
+
+    if (!mounted) return;
+    page.redrawStrokes();
+    history.recordChange(
+      EditorHistoryItem(
+        type: .bitmap,
+        pageIndex: coreInfo.pages.indexOf(page),
+        strokes: const [],
+        images: const [],
+        bitmapChange: Change(previous: before, current: bitmap.cachedPng),
+      ),
+    );
+    autosaveAfterDelay();
+  }
+
   /// 用当前橡皮在 [position] 处擦一下：直接改页面笔迹，并把改动攒进待提交的历史。
   ///
   /// 圆形/方形擦子会把一条笔迹切成几段，所以除了"删掉哪些"还会"新增哪些"。
@@ -414,6 +530,12 @@ class EditorState extends State<Editor> {
 
     // 让画布在笔尖处画出与实际擦除区域等大的空心预览
     tool.previewPosition = position;
+
+    // 位图模式：一根矢量笔迹都不碰，只把轨迹记下来，抬笔时统一抹像素
+    if (isBitmapMode) {
+      _bitmapErasePath.add(position);
+      return;
+    }
 
     final result = tool.eraseAt(position, page.strokes);
     if (result.removed.isEmpty && result.added.isEmpty) return;
@@ -752,6 +874,9 @@ class EditorState extends State<Editor> {
 
         case .backgroundPattern:
           coreInfo.backgroundPattern = item.backgroundPatternChange!.previous;
+
+        case .bitmap:
+          _restorePageBitmap(item.pageIndex, item.bitmapChange!.previous);
       }
 
       if (item.type != .move) {
@@ -804,7 +929,31 @@ class EditorState extends State<Editor> {
             backgroundPatternChange: item.backgroundPatternChange!.reverse(),
           ),
         );
+      case .bitmap:
+        undo(
+          item.copyWith(bitmapChange: item.bitmapChange!.reverse()),
+        );
     }
+  }
+
+  /// 把某一页的位图层换成给定的 PNG 快照（撤销 / 重做用）。
+  ///
+  /// 快照存的是 PNG 字节，解回 ui.Image 是异步的：先立刻清掉当前画面
+  /// （否则旧图和还原后的图会短暂叠在一起），解好再填回去。
+  void _restorePageBitmap(int pageIndex, Uint8List? png) {
+    final page = coreInfo.pages[pageIndex];
+    // 注意：不 dispose 被换下来的那张位图 —— 历史栈里可能还有引用。
+    page.bitmap = null;
+    page.redrawStrokes();
+
+    if (png == null) return;
+    unawaited(
+      EditorBitmap.fromPng(png).then((bitmap) {
+        if (bitmap == null || !mounted) return;
+        page.bitmap = bitmap;
+        page.redrawStrokes();
+      }),
+    );
   }
 
   int? onWhichPageIsFocalPoint(Offset focalPoint) {
@@ -886,6 +1035,8 @@ class EditorState extends State<Editor> {
         currentPressure,
       );
     } else if (currentTool is Eraser) {
+      // 位图模式下这一趟的轨迹要从头开始记
+      _bitmapErasePath.clear();
       _eraseAt(position, page);
       removeExcessPages();
     } else if (currentTool is Select) {
@@ -962,6 +1113,12 @@ class EditorState extends State<Editor> {
           newStroke.convertToLine();
         }
 
+        if (isBitmapMode) {
+          // 位图模式：这一笔固化成像素，不进矢量笔迹列表
+          unawaited(_rasterizeStrokeToBitmap(page, newStroke));
+          return;
+        }
+
         createPage(newStroke.pageIndex);
         page.insertStroke(newStroke);
         history.recordChange(
@@ -973,7 +1130,25 @@ class EditorState extends State<Editor> {
           ),
         );
       } else if (currentTool is Eraser) {
-        (currentTool as Eraser).previewPosition = null;
+        final eraser = currentTool as Eraser;
+        eraser.previewPosition = null;
+
+        if (isBitmapMode) {
+          // 位图模式：把这一趟轨迹上的像素抹掉，矢量笔迹一根都不动，
+          // 所以也不必走下面「删了哪些、又切出了哪些」那套历史
+          final bitmapErasePath = List<Offset>.from(_bitmapErasePath);
+          _bitmapErasePath.clear();
+          _erasedStrokes.clear();
+          _addedStrokes.clear();
+          unawaited(_rasterizeEraseToBitmap(page, bitmapErasePath, eraser.size));
+
+          if (stylusButtonWasPressed || stows.disableEraserAfterUse.value) {
+            stylusButtonWasPressed = false;
+            currentTool = _lastNonEraserTool;
+          }
+          return;
+        }
+
         final erased = List<Stroke>.from(_erasedStrokes);
         final added = List<Stroke>.from(_addedStrokes);
         _erasedStrokes.clear();
@@ -2095,14 +2270,18 @@ class EditorState extends State<Editor> {
           : null,
     );
 
+    // 工具栏「看不见」的两种情况：用户手动收起的，和全屏下按设置自动折叠的。
+    // 后面 body 里据此决定要不要显示边缘的唤出把手。
+    final toolbarCollapsed =
+        _toolbarCollapsed ||
+        (DynamicMaterialApp.isFullscreen &&
+            !stows.editorToolbarShowInFullscreen.value);
+
     final Widget toolbarBar = Collapsible(
       axis: isToolbarVertical
           ? CollapsibleAxis.horizontal
           : CollapsibleAxis.vertical,
-      collapsed:
-          _toolbarCollapsed ||
-          (DynamicMaterialApp.isFullscreen &&
-              !stows.editorToolbarShowInFullscreen.value),
+      collapsed: toolbarCollapsed,
       maintainState: true,
       child: SafeArea(
         bottom: stows.editorToolbarAlignment.value != AxisDirection.up,
@@ -2275,10 +2454,14 @@ class EditorState extends State<Editor> {
           exportAsPdf: exportAsPdf,
           exportAsPng: exportAsPng,
           exportAsMarkdown: exportAsMarkdown,
-          // TEMP 诊断：先关掉「工具栏拖到任意一条边」，验证它是不是元凶
-          // onToolbarDragStart: _onToolbarPanStart,
-          // onToolbarDragUpdate: _onToolbarPanUpdate,
-          // onToolbarDragEnd: _onToolbarPanEnd,
+          // 工具栏末端「收起」按钮：收成边缘一条细条，把屏幕让给写字
+          onCollapse: () {
+            if (mounted) setState(() => _toolbarCollapsed = true);
+          },
+          // 起始端的拖动把手：拽着它把工具栏换到别的边
+          onToolbarDragStart: _onToolbarPanStart,
+          onToolbarDragUpdate: _onToolbarPanUpdate,
+          onToolbarDragEnd: _onToolbarPanEnd,
         ),
       ),
     );
@@ -2352,6 +2535,10 @@ class EditorState extends State<Editor> {
       children: [
         layoutBody,
         if (_isToolbarDragging) _buildToolbarDragOverlay(context),
+        // 工具栏收起后，在它原来那条边上留个把手，点一下收回来。
+        // 没有这个的话收起就再也找不到工具栏了（全屏模式下尤其致命：
+        // 「退出全屏」按钮本身就在工具栏里）。
+        if (toolbarCollapsed) _buildToolbarCollapsedBar(context),
         // 右下角的页码胶囊：大文档里用来知道「我在第几页」并快速跳页
         _buildPagePill(context),
       ],
@@ -2645,6 +2832,8 @@ class EditorState extends State<Editor> {
             focusNode: FocusNode(debugLabel: 'Quill Focus Node'),
           ),
           backgroundImage: page.backgroundImage?.copy()?..pageIndex += 1,
+          // 位图必须 clone：直接共享引用的话，画其中一页会同时改到另一页
+          bitmap: page.bitmap?.clone(),
         );
         coreInfo.pages.insert(pageIndex + 1, newPage);
         listenToQuillChanges(newPage.quill, pageIndex + 1);
@@ -2696,6 +2885,23 @@ class EditorState extends State<Editor> {
     autosaveAfterDelay();
   });
 
+  /// 清空某一页的位图层，并记一条可撤销的历史。
+  void _clearPageBitmap(EditorPage page, int pageIndex) {
+    if (!(page.bitmap?.isNotEmpty ?? false)) return;
+    final before = page.bitmap!.cachedPng;
+    page.bitmap = null;
+    page.redrawStrokes();
+    history.recordChange(
+      EditorHistoryItem(
+        type: .bitmap,
+        pageIndex: pageIndex,
+        strokes: const [],
+        images: const [],
+        bitmapChange: Change(previous: before, current: null),
+      ),
+    );
+  }
+
   void clearPage(int pageIndex) {
     if (coreInfo.readOnly) return;
     final page = coreInfo.pages[pageIndex];
@@ -2704,6 +2910,7 @@ class EditorState extends State<Editor> {
       final removedImages = page.images.toList();
       page.strokes.clear();
       page.images.clear();
+      _clearPageBitmap(page, pageIndex);
       removeExcessPages();
       history.recordChange(
         EditorHistoryItem(
@@ -2722,13 +2929,33 @@ class EditorState extends State<Editor> {
     setState(() {
       final removedStrokes = <Stroke>[];
       final removedImages = <EditorImage>[];
-      for (final page in coreInfo.pages) {
+      final removedBitmaps = <int, Uint8List?>{};
+      for (var i = 0; i < coreInfo.pages.length; i++) {
+        final page = coreInfo.pages[i];
         removedStrokes.addAll(page.strokes);
         removedImages.addAll(page.images);
         page.strokes.clear();
         page.images.clear();
+
+        // 位图层也要清掉，并且逐页单独记账（清空是可撤销的）
+        if (page.bitmap?.isNotEmpty ?? false) {
+          removedBitmaps[i] = page.bitmap!.cachedPng;
+          page.bitmap = null;
+          page.redrawStrokes();
+        }
       }
       removeExcessPages();
+      for (final entry in removedBitmaps.entries) {
+        history.recordChange(
+          EditorHistoryItem(
+            type: .bitmap,
+            pageIndex: entry.key,
+            strokes: const [],
+            images: const [],
+            bitmapChange: Change(previous: entry.value, current: null),
+          ),
+        );
+      }
       history.recordChange(
         EditorHistoryItem(
           type: .erase,

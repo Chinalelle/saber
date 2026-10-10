@@ -418,6 +418,10 @@ editor:
   pages: Pages
   hideToolbar: Hide the toolbar
   showToolbar: Show the toolbar
+  bitmapMode: Bitmap mode
+  bitmapModeOn: 'Bitmap mode: on — strokes are burned into pixels'
+  bitmapModeOff: 'Bitmap mode: off — strokes stay editable'
+  bitmapModeHint: Strokes are painted as pixels instead of paths, so the eraser can rub out half a line. Vector strokes and the bitmap layer are shown together.
   insertMath: Insert formula
   mathTex: LaTeX formula
   mathEmpty: Type a formula first

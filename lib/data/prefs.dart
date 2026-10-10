@@ -137,6 +137,19 @@ class Stows {
     true,
     volatile: !_isOnMainIsolate,
   );
+  /// 「位图编辑模式」：开着的时候，画的笔迹会以像素为单位固化成位图，
+  /// 橡皮擦也是直接抹掉像素（能擦掉半条线），而不是整笔删除。
+  final editorBitmapMode = PlainStow(
+    'editorBitmapMode',
+    false,
+    volatile: !_isOnMainIsolate,
+  );
+  /// 位图分辨率相对页面逻辑尺寸的倍率（越大越清晰、越费内存）。
+  final editorBitmapPixelRatio = PlainStow(
+    'editorBitmapPixelRatio',
+    2.0,
+    volatile: !_isOnMainIsolate,
+  );
   final editorFingerDrawing = PlainStow(
     'editorFingerDrawing',
     true,

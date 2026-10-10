@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:saber/components/canvas/_stroke.dart';
@@ -149,6 +151,7 @@ class EditorHistoryItem {
     this.quillChange,
     this.colorChange,
     this.backgroundPatternChange,
+    this.bitmapChange,
   }) : assert(
          type != .move || offset != null,
          'Offset must be provided for move',
@@ -176,6 +179,10 @@ class EditorHistoryItem {
        assert(
          type != .backgroundPattern || backgroundPatternChange != null,
          'Background pattern change must be provided for backgroundPattern',
+       ),
+       assert(
+         type != .bitmap || bitmapChange != null,
+         'Bitmap change must be provided for bitmap',
        );
 
   final EditorHistoryItemType type;
@@ -188,6 +195,13 @@ class EditorHistoryItem {
   final Map<Stroke, Change<Color>>? colorChange;
   final Change<CanvasBackgroundPattern>? backgroundPatternChange;
 
+  /// 位图图层的一次改动，存的是改动前后的 **PNG 字节**。
+  ///
+  /// 为什么不存 `Change<ui.Image>`：撤销栈有 100 层，每层一张整页位图
+  /// 叠起来就是几百 MB 显存；PNG 压缩后通常只有几十 KB。
+  /// 代价是撤销/重做时要异步解码一次（位图稍后才出现，肉眼几乎无感）。
+  final Change<Uint8List?>? bitmapChange;
+
   EditorHistoryItem copyWith({
     EditorHistoryItemType? type,
     int? pageIndex,
@@ -198,6 +212,7 @@ class EditorHistoryItem {
     DocChange? quillChange,
     Map<Stroke, Change<Color>>? colorChange,
     Change<CanvasBackgroundPattern>? backgroundPatternChange,
+    Change<Uint8List?>? bitmapChange,
   }) {
     return EditorHistoryItem(
       type: type ?? this.type,
@@ -210,6 +225,7 @@ class EditorHistoryItem {
       colorChange: colorChange ?? this.colorChange,
       backgroundPatternChange:
           backgroundPatternChange ?? this.backgroundPatternChange,
+      bitmapChange: bitmapChange ?? this.bitmapChange,
     );
   }
 }
@@ -224,4 +240,5 @@ enum EditorHistoryItemType {
   quillUndoneChange,
   changeColor,
   backgroundPattern,
+  bitmap,
 }

@@ -10,8 +10,11 @@ import 'package:saber/components/canvas/_stroke.dart';
 import 'package:saber/components/canvas/image/editor_image.dart';
 import 'package:saber/components/canvas/inner_canvas.dart';
 import 'package:saber/components/canvas/pencil_shader.dart';
+import 'package:saber/data/editor/editor_bitmap.dart';
 import 'package:saber/data/editor/editor_exporter.dart';
+import 'package:saber/data/file_manager/file_manager.dart';
 import 'package:saber/data/tools/laser_pointer.dart';
+import 'package:saber/pages/editor/editor.dart';
 import 'package:sbn/has_size.dart';
 
 typedef CanvasKey = GlobalKey<State<InnerCanvas>>;
@@ -80,12 +83,22 @@ class EditorPage extends ChangeNotifier implements HasSize {
 
   EditorImage? backgroundImage;
 
+  /// 位图图层：以像素为单位累积的绘制结果（位图编辑模式用）。
+  ///
+  /// 和矢量笔迹是**两套并存**的东西：切到位图模式后画的东西进这一层，
+  /// 关掉位图模式照旧画矢量笔迹，两者会同时显示（位图在笔迹下面）。
+  ///
+  /// 加载是异步的（PNG 解码），所以这个字段会在页面建好之后才被填上，
+  /// 填上时调用 [notifyListeners] 触发重绘。
+  EditorBitmap? bitmap;
+
   bool get isEmpty =>
       strokes.isEmpty &&
       images.isEmpty &&
       textBoxes.every((box) => box.isEmpty) &&
       quill.controller.document.isEmpty() &&
-      backgroundImage == null;
+      backgroundImage == null &&
+      (bitmap?.isEmpty ?? true);
   bool get isNotEmpty => !isEmpty;
 
   /// The height of the canvas cropped to the content.
@@ -99,6 +112,11 @@ class EditorPage extends ChangeNotifier implements HasSize {
 
     // if we have a background image, show full height
     if (backgroundImage != null) {
+      return size.height;
+    }
+    // 位图可以画在任何位置，裁剪高度就得按整页算，
+    // 否则缩略图会把画在下面的东西整块切掉
+    if (bitmap?.isNotEmpty ?? false) {
       return size.height;
     }
 
@@ -139,6 +157,7 @@ class EditorPage extends ChangeNotifier implements HasSize {
     List<EditorTextBox>? textBoxes,
     QuillStruct? quill,
     this.backgroundImage,
+    this.bitmap,
   }) : assert(
          (size == null) || (width == null && height == null),
          "size and width/height shouldn't both be specified",
@@ -164,7 +183,7 @@ class EditorPage extends ChangeNotifier implements HasSize {
     required AssetCache assetCache,
   }) {
     final size = Size(json['w'] ?? defaultWidth, json['h'] ?? defaultHeight);
-    return EditorPage(
+    final page = EditorPage(
       size: size,
       strokes: parseStrokesJson(
         json['s'] as List?,
@@ -204,21 +223,99 @@ class EditorPage extends ChangeNotifier implements HasSize {
             )
           : null,
     );
+
+    // 位图层存的是 PNG 字节，解成 ui.Image 是异步的。
+    // 先把页面交出去（笔记能立刻打开、其它内容照常显示），
+    // 解码完成后再把位图填上并通知重绘。
+    //
+    // 导出的地方（截图/生成缩略图）必须 await [ensureBitmapLoaded]，
+    // 否则会截到一张还没有位图的图。
+    final bitmapIndex = json['bm'];
+    if (bitmapIndex is int && bitmapIndex >= 0) {
+      page._pendingBitmapLoad = page._loadBitmap(
+        bitmapIndex,
+        inlineAssets: inlineAssets,
+        sbnPath: sbnPath,
+      );
+    }
+
+    return page;
   }
 
-  Map<String, dynamic> toJson(OrderedAssetCache assets) => {
-    'w': size.width,
-    'h': size.height,
-    if (strokes.isNotEmpty)
-      's': strokes.map((stroke) => stroke.toJson()).toList(),
-    if (images.isNotEmpty)
-      'i': images.map((image) => image.toJson(assets)).toList(),
-    if (textBoxes.isNotEmpty)
-      'tb': textBoxes.map((box) => box.toJson()).toList(),
-    if (!quill.controller.document.isEmpty())
-      'q': quill.controller.document.toDelta().toJson(),
-    if (backgroundImage != null) 'b': backgroundImage?.toJson(assets),
-  };
+  /// 正在异步加载的位图（导出前用 [ensureBitmapLoaded] 等它）。
+  Future<void>? _pendingBitmapLoad;
+
+  /// 等位图解码完成；这一页没有位图时立刻返回。
+  Future<void> ensureBitmapLoaded() async => _pendingBitmapLoad;
+
+  /// 把位图读出来、解码、填进页面。
+  ///
+  /// 位图在文件里存的是**资源下标**，和图片的 `'a'` 是同一套机制：
+  /// v19 之前资源内联在 json 里（[inlineAssets]），之后是独立文件
+  /// `<笔记路径>.sbn2.<下标>`。两条路都得能走 —— 只认内联的话，
+  /// 新格式的笔记里位图会「存得上、读不回」。
+  Future<void> _loadBitmap(
+    int index, {
+    required List<Uint8List>? inlineAssets,
+    required String sbnPath,
+  }) async {
+    final bytes = await _readBitmapBytes(
+      index,
+      inlineAssets: inlineAssets,
+      sbnPath: sbnPath,
+    );
+    if (bytes == null || bytes.isEmpty) return;
+
+    final bitmap = await EditorBitmap.fromPng(bytes);
+    if (bitmap == null) return;
+    this.bitmap = bitmap;
+    notifyListeners();
+  }
+
+  /// 按下标把位图的 PNG 字节读出来。
+  ///
+  /// 位图在文件里存的是**资源下标**，和图片的 `'a'` 是同一套机制：
+  /// v19 之前资源内联在 json 里（[inlineAssets]），之后是独立文件
+  /// `<笔记路径>.sbn2.<下标>`。两条路都得能走 —— 只认内联的话，
+  /// 新格式的笔记里位图会「存得上、读不回」。
+  static Future<Uint8List?> _readBitmapBytes(
+    int index, {
+    required List<Uint8List>? inlineAssets,
+    required String sbnPath,
+  }) async {
+    if (inlineAssets != null && index < inlineAssets.length) {
+      return inlineAssets[index];
+    }
+    try {
+      return await FileManager.getFile(
+        '$sbnPath${Editor.extension}.$index',
+      ).readAsBytes();
+    } catch (_) {
+      // 资源文件不在（笔记被单独拷走等）：当作这一页没有位图，
+      // 不能因为一个图层让整篇笔记打不开
+      return null;
+    }
+  }
+
+  Map<String, dynamic> toJson(OrderedAssetCache assets) {
+    final bitmapPng = bitmap?.cachedPng;
+    return {
+      'w': size.width,
+      'h': size.height,
+      if (strokes.isNotEmpty)
+        's': strokes.map((stroke) => stroke.toJson()).toList(),
+      if (images.isNotEmpty)
+        'i': images.map((image) => image.toJson(assets)).toList(),
+      if (textBoxes.isNotEmpty)
+        'tb': textBoxes.map((box) => box.toJson()).toList(),
+      if (!quill.controller.document.isEmpty())
+        'q': quill.controller.document.toDelta().toJson(),
+      if (backgroundImage != null) 'b': backgroundImage?.toJson(assets),
+      // 位图：只把「资源下标」写进 json，PNG 字节交给 OrderedAssetCache
+      // 去重后统一落盘（和图片一个待遇，不塞进主文件）
+      if (bitmapPng != null) 'bm': assets.add(bitmapPng),
+    };
+  }
 
   /// Inserts a stroke, while keeping the strokes sorted by
   /// pen type and color.
@@ -338,6 +435,7 @@ class EditorPage extends ChangeNotifier implements HasSize {
       image.dispose();
     }
     backgroundImage?.dispose();
+    bitmap?.dispose();
     super.dispose();
   }
 
@@ -364,6 +462,7 @@ class EditorPage extends ChangeNotifier implements HasSize {
     List<EditorTextBox>? textBoxes,
     QuillStruct? quill,
     EditorImage? backgroundImage,
+    EditorBitmap? bitmap,
   }) => EditorPage(
     size: size ?? this.size,
     strokes: strokes ?? this.strokes,
@@ -371,6 +470,9 @@ class EditorPage extends ChangeNotifier implements HasSize {
     textBoxes: textBoxes ?? this.textBoxes,
     quill: quill ?? this.quill,
     backgroundImage: backgroundImage ?? this.backgroundImage,
+    // 默认按引用共享（cloneForRasterization 就是靠这个把位图带进截图）；
+    // 「复制页面」那种需要独立副本的场景，调用方自己传 clone()
+    bitmap: bitmap ?? this.bitmap,
   );
 
   /// Clones this page for use in a screenshot.

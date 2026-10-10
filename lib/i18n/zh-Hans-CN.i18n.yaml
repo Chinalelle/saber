@@ -418,6 +418,10 @@ editor:
   pages: 页面
   hideToolbar: 收起工具栏
   showToolbar: 展开工具栏
+  bitmapMode: 位图模式
+  bitmapModeOn: 位图模式：已开启 —— 笔迹会固化成像素
+  bitmapModeOff: 位图模式：已关闭 —— 笔迹仍然是可编辑的矢量
+  bitmapModeHint: 画下去的会变成像素而不是路径，所以橡皮擦能把一条线擦掉一半。矢量层和位图层会同时显示。
   insertMath: 插入公式
   mathTex: LaTeX 公式
   mathEmpty: 先写点什么

@@ -165,6 +165,10 @@ abstract class EditorExporter {
     double? cropHeight,
     double pixelRatio = 2,
   }) async {
+    // 位图是异步解码的：刚打开笔记就导出的话它还没到位，会截到一张
+    // 没有位图的图。所以先等原页面把位图加载完，再克隆。
+    await coreInfo.pages[pageIndex].ensureBitmapLoaded();
+
     final page = coreInfo.pages[pageIndex].cloneForRasterization(
       rasterizeAllStrokes: rasterizeAllStrokes,
     );

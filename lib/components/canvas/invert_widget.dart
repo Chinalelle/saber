@@ -12,9 +12,11 @@ class InvertWidget extends StatelessWidget {
     return ColorFiltered(colorFilter: _invertFilter, child: child);
   }
 
-  static const _invertFilter = ColorFilter.matrix(_invertMatrix);
+  static const _invertFilter = ColorFilter.matrix(invertMatrix);
   // dart format off
-  static const _invertMatrix = <double>[
+  /// 反色矩阵。公开出来是为了让画在 canvas 上的位图层
+  /// （见 CanvasPainter._drawBitmap）能和这里的 widget 用同一套反色。
+  static const invertMatrix = <double>[
     1 - 2 * lumaR,   - 2 * lumaG,   - 2 * lumaB, 0, 255,
       - 2 * lumaR, 1 - 2 * lumaG,   - 2 * lumaB, 0, 255,
       - 2 * lumaR,   - 2 * lumaG, 1 - 2 * lumaB, 0, 255,
