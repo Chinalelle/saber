@@ -103,6 +103,8 @@ class Translations$settings$zh_Hans_CN extends Translations$settings$en {
 	final TranslationsZhHansCn _root; // ignore: unused_field
 
 	// Translations
+	@override late final Translations$settings$infiniteCanvasPatterns$zh_Hans_CN infiniteCanvasPatterns = Translations$settings$infiniteCanvasPatterns$zh_Hans_CN.internal(_root);
+	@override late final Translations$settings$infiniteCanvasTextures$zh_Hans_CN infiniteCanvasTextures = Translations$settings$infiniteCanvasTextures$zh_Hans_CN.internal(_root);
 	@override late final Translations$settings$prefCategories$zh_Hans_CN prefCategories = Translations$settings$prefCategories$zh_Hans_CN.internal(_root);
 	@override late final Translations$settings$prefLabels$zh_Hans_CN prefLabels = Translations$settings$prefLabels$zh_Hans_CN.internal(_root);
 	@override late final Translations$settings$prefDescriptions$zh_Hans_CN prefDescriptions = Translations$settings$prefDescriptions$zh_Hans_CN.internal(_root);
@@ -118,6 +120,7 @@ class Translations$settings$zh_Hans_CN extends Translations$settings$en {
 	];
 	@override late final Translations$settings$reset$zh_Hans_CN reset = Translations$settings$reset$zh_Hans_CN.internal(_root);
 	@override String get resyncEverything => '重新同步所有';
+	@override String get downloadFromServer => '从服务器下载';
 	@override String get openDataDir => '打开 Saber 文件夹';
 	@override late final Translations$settings$customDataDir$zh_Hans_CN customDataDir = Translations$settings$customDataDir$zh_Hans_CN.internal(_root);
 	@override String get autosaveDisabled => '禁用';
@@ -218,6 +221,7 @@ class Translations$editor$zh_Hans_CN extends Translations$editor$en {
 	final TranslationsZhHansCn _root; // ignore: unused_field
 
 	// Translations
+	@override late final Translations$editor$eraser$zh_Hans_CN eraser = Translations$editor$eraser$zh_Hans_CN.internal(_root);
 	@override late final Translations$editor$toolbar$zh_Hans_CN toolbar = Translations$editor$toolbar$zh_Hans_CN.internal(_root);
 	@override late final Translations$editor$pens$zh_Hans_CN pens = Translations$editor$pens$zh_Hans_CN.internal(_root);
 	@override late final Translations$editor$penOptions$zh_Hans_CN penOptions = Translations$editor$penOptions$zh_Hans_CN.internal(_root);
@@ -230,6 +234,18 @@ class Translations$editor$zh_Hans_CN extends Translations$editor$en {
 	@override late final Translations$editor$quill$zh_Hans_CN quill = Translations$editor$quill$zh_Hans_CN.internal(_root);
 	@override late final Translations$editor$hud$zh_Hans_CN hud = Translations$editor$hud$zh_Hans_CN.internal(_root);
 	@override String get pages => '页面';
+	@override String get hideToolbar => '收起工具栏';
+	@override String get showToolbar => '展开工具栏';
+	@override String get insertMath => '插入公式';
+	@override String get mathTex => 'LaTeX 公式';
+	@override String get mathEmpty => '先写点什么';
+	@override String get mathInvalid => '这个公式解析不了，检查一下括号';
+	@override String get goToPage => '跳转到页面';
+	@override String get pageNumber => '页码';
+	@override String pageNumberOutOfRange({required Object max}) => '请输入 1 到 ${max} 之间的页码';
+	@override String get previousPage => '上一页';
+	@override String get nextPage => '下一页';
+	@override late final Translations$editor$outline$zh_Hans_CN outline = Translations$editor$outline$zh_Hans_CN.internal(_root);
 	@override String get untitled => '未命名';
 	@override String get needsToSaveBeforeExiting => '正在保存您的更改… 完成后您可以安全地退出编辑器';
 }
@@ -280,6 +296,7 @@ class Translations$home$create$zh_Hans_CN extends Translations$home$create$en {
 
 	// Translations
 	@override String get newNote => '新建笔记';
+	@override String get newInfiniteCanvas => '无边画布';
 	@override String get importNote => '导入笔记';
 }
 
@@ -412,6 +429,29 @@ class Translations$sentry$consent$zh_Hans_CN extends Translations$sentry$consent
 	@override late final Translations$sentry$consent$answers$zh_Hans_CN answers = Translations$sentry$consent$answers$zh_Hans_CN.internal(_root);
 }
 
+// Path: settings.infiniteCanvasPatterns
+class Translations$settings$infiniteCanvasPatterns$zh_Hans_CN extends Translations$settings$infiniteCanvasPatterns$en {
+	Translations$settings$infiniteCanvasPatterns$zh_Hans_CN.internal(TranslationsZhHansCn root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHansCn _root; // ignore: unused_field
+
+	// Translations
+	@override String get none => '无';
+	@override String get grid => '方格';
+	@override String get dots => '点阵';
+}
+
+// Path: settings.infiniteCanvasTextures
+class Translations$settings$infiniteCanvasTextures$zh_Hans_CN extends Translations$settings$infiniteCanvasTextures$en {
+	Translations$settings$infiniteCanvasTextures$zh_Hans_CN.internal(TranslationsZhHansCn root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHansCn _root; // ignore: unused_field
+
+	// Translations
+	@override String get smooth => '光滑';
+	@override String get paper => '纸张';
+}
+
 // Path: settings.prefCategories
 class Translations$settings$prefCategories$zh_Hans_CN extends Translations$settings$prefCategories$en {
 	Translations$settings$prefCategories$zh_Hans_CN.internal(TranslationsZhHansCn root) : this._root = root, super.internal(root);
@@ -422,6 +462,8 @@ class Translations$settings$prefCategories$zh_Hans_CN extends Translations$setti
 	@override String get general => '通用';
 	@override String get writing => '书写';
 	@override String get editor => '编辑器';
+	@override String get infiniteCanvas => '无边画布';
+	@override String get aiOutline => 'AI 大纲';
 	@override String get performance => '性能';
 	@override String get advanced => '高级';
 }
@@ -433,6 +475,15 @@ class Translations$settings$prefLabels$zh_Hans_CN extends Translations$settings$
 	final TranslationsZhHansCn _root; // ignore: unused_field
 
 	// Translations
+	@override String get aiApiKey => 'API Key';
+	@override String get aiBaseUrl => '接口地址';
+	@override String get aiModel => '模型';
+	@override String get aiPagesPerBatch => '每次请求页数';
+	@override String get aiRenderLongSide => '每页渲染尺寸';
+	@override String get infiniteCanvasColor => '背景颜色';
+	@override String get infiniteCanvasPattern => '背景格式';
+	@override String get infiniteCanvasTexture => '背景纹理';
+	@override String get gridDensity => '网格疏密';
 	@override String get locale => '应用语言';
 	@override String get appTheme => '应用主题';
 	@override String get platform => '主题类型';
@@ -447,6 +498,7 @@ class Translations$settings$prefLabels$zh_Hans_CN extends Translations$settings$
 	@override String get editorAutoInvert => '在深色模式下使用反色笔记背景';
 	@override String get preferGreyscale => '使用灰度颜色';
 	@override String get maxImageSize => '最大图片大小';
+	@override String get textBoxOpacity => '文本框透明度';
 	@override String get autoClearWhiteboardOnExit => '离开应用后清除白板';
 	@override String get disableEraserAfterUse => '自动禁用橡皮擦';
 	@override String get hideFingerDrawingToggle => '隐藏 切换手指绘图';
@@ -470,11 +522,18 @@ class Translations$settings$prefDescriptions$zh_Hans_CN extends Translations$set
 
 	// Translations
 	@override String get hyperlegibleFont => 'Atkinson Hyperlegible 字体为低视力读者提高易读性';
+	@override String get aiApiKey => '识别页面需要它。只存在这台设备上，绝不写进笔记文件';
+	@override String get aiBaseUrl => '任何兼容 OpenAI 接口的服务都行，默认 DeepSeek 官方';
+	@override String get aiModel => '必须是能读图的多模态模型';
+	@override String get aiPagesPerBatch => '一次带几页，越多越快，但失败一次要重跑的也越多';
+	@override String get aiRenderLongSide => '每页渲染出来的长边像素。越大越能看清小标题，也越费 token';
 	@override String get allowInsecureConnections => '（不推荐）允许 Saber 连接到具有自签名/不受信任证书的服务器';
 	@override String get preferGreyscale => '用于电子墨水显示器';
 	@override String get autoClearWhiteboardOnExit => '这将会同步到您的其他设备';
 	@override String get disableEraserAfterUse => '使用橡皮擦后自动切换回笔';
 	@override String get maxImageSize => '更大的图片将会被压缩';
+	@override String get textBoxOpacity => '越低越能看见文本框底下的笔迹';
+	@override String get gridDensity => '数字越小，方格和点阵越密';
 	@override late final Translations$settings$prefDescriptions$hideFingerDrawing$zh_Hans_CN hideFingerDrawing = Translations$settings$prefDescriptions$hideFingerDrawing$zh_Hans_CN.internal(_root);
 	@override String get autoDisableFingerDrawingWhenStylusDetected => '当检测到手写笔时关闭手指绘图';
 	@override String get editorPromptRename => '您可以总是稍后重命名笔记';
@@ -586,6 +645,13 @@ class Translations$login$ncLoginStep$zh_Hans_CN extends Translations$login$ncLog
 	@override String get serverUrl => '服务器 URL';
 	@override String get loginWithSaber => '使用 Saber 登录';
 	@override String get loginWithNextcloud => '使用 Nextcloud 登录';
+	@override String get username => '用户名';
+	@override String get password => '密码';
+	@override String get login => '登录';
+	@override String get checking => '正在验证…';
+	@override String get serverUrlHint => '例如 https://你的群晖域名:5006';
+	@override String get wrongCredentials => '账号或密码不对';
+	@override String loginFailed({required Object error}) => '登录失败：${error}';
 	@override late final Translations$login$ncLoginStep$loginFlow$zh_Hans_CN loginFlow = Translations$login$ncLoginStep$loginFlow$zh_Hans_CN.internal(_root);
 }
 
@@ -664,6 +730,20 @@ class Translations$profile$faq$3$zh_Hans_CN extends Translations$profile$faq$3$e
 	@override String get a => '点击上面的 "${_root.profile.quickLinks.deleteAccount}" 按钮，并在需要时登录。\n如果您使用的是官方 Saber 服务器，您的帐户将在 1 周的宽限期后被删除。在此期间，您可以通过 adilhanney@disroot.org 与我联系以取消删除。\n如果您使用的是第三方服务器，则可能没有删除帐户的选项：您需要咨询服务器的隐私政策以获取更多信息。';
 }
 
+// Path: editor.eraser
+class Translations$editor$eraser$zh_Hans_CN extends Translations$editor$eraser$en {
+	Translations$editor$eraser$zh_Hans_CN.internal(TranslationsZhHansCn root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHansCn _root; // ignore: unused_field
+
+	// Translations
+	@override String get mode => '橡皮擦类型';
+	@override String get modeStroke => '笔迹';
+	@override String get modeCircle => '圆形';
+	@override String get modeSquare => '方形';
+	@override String get size => '大小';
+}
+
 // Path: editor.toolbar
 class Translations$editor$toolbar$zh_Hans_CN extends Translations$editor$toolbar$en {
 	Translations$editor$toolbar$zh_Hans_CN.internal(TranslationsZhHansCn root) : this._root = root, super.internal(root);
@@ -675,7 +755,9 @@ class Translations$editor$toolbar$zh_Hans_CN extends Translations$editor$toolbar
 	@override String get select => '选择';
 	@override String get toggleEraser => '切换橡皮擦 (Ctrl E)';
 	@override String get photo => '照片';
+	@override String get takePhoto => '拍照';
 	@override String get text => '文本';
+	@override String get insertTextBox => '插入文本框';
 	@override String get toggleFingerDrawing => '切换手指绘图 (Ctrl F)';
 	@override String get undo => '撤销';
 	@override String get redo => '重做';
@@ -842,6 +924,26 @@ class Translations$editor$hud$zh_Hans_CN extends Translations$editor$hud$en {
 	@override String get lockSingleFingerPan => '禁用单指平移';
 	@override String get unlockAxisAlignedPan => '解锁水平或垂直平移';
 	@override String get lockAxisAlignedPan => '锁定水平或垂直平移';
+}
+
+// Path: editor.outline
+class Translations$editor$outline$zh_Hans_CN extends Translations$editor$outline$en {
+	Translations$editor$outline$zh_Hans_CN.internal(TranslationsZhHansCn root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHansCn _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '大纲';
+	@override String get empty => '还没有大纲';
+	@override String get emptyHint => '用 AI 识别页面，生成一份可以点的目录';
+	@override String get generate => '生成大纲';
+	@override String get regenerate => '重新生成';
+	@override String get generating => '正在识别…';
+	@override String progress({required Object done, required Object total}) => '已处理 ${done} / ${total} 页';
+	@override String get cancel => '取消';
+	@override String get fromBookmarks => '来自 PDF 自带书签';
+	@override String get fromAi => 'AI 识别生成';
+	@override String get failed => '大纲生成失败';
 }
 
 // Path: sentry.consent.description

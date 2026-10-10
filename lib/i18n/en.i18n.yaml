@@ -19,6 +19,7 @@ home:
     exportNote: Export note
   create:
     newNote: New note
+    newInfiniteCanvas: New infinite canvas
     importNote: Import note
   welcome: Welcome to Saber
   invalidFormat: The file you selected is not supported. Please select an sbn, sbn2, sba, or pdf file.
@@ -93,13 +94,31 @@ sentry:
       no: No
       later: Ask me later
 settings:
+  infiniteCanvasPatterns:
+    none: None
+    grid: Grid
+    dots: Dots
+  infiniteCanvasTextures:
+    smooth: Smooth
+    paper: Paper
   prefCategories:
     general: General
     writing: Writing
     editor: Editor
+    infiniteCanvas: Infinite canvas
+    aiOutline: AI outline
     performance: Performance
     advanced: Advanced
   prefLabels:
+    aiApiKey: API key
+    aiBaseUrl: API endpoint
+    aiModel: Model
+    aiPagesPerBatch: Pages per request
+    aiRenderLongSide: Page render size
+    infiniteCanvasColor: Background colour
+    infiniteCanvasPattern: Background pattern
+    infiniteCanvasTexture: Background texture
+    gridDensity: Grid density
     locale: Language
     appTheme: App theme
     platform: Theme type
@@ -114,6 +133,7 @@ settings:
     editorAutoInvert: Invert notes in dark mode
     preferGreyscale: Prefer greyscale colors
     maxImageSize: Maximum image size
+    textBoxOpacity: Text box opacity
     autoClearWhiteboardOnExit: Auto-clear the whiteboard
     disableEraserAfterUse: Auto-disable the eraser
     hideFingerDrawingToggle: Hide the finger drawing toggle
@@ -129,11 +149,18 @@ settings:
     sentry: Error reporting
   prefDescriptions:
     hyperlegibleFont: Increases legibility for users with low vision
+    aiApiKey: Needed to analyse pages. Stored on this device only and never written into the note file
+    aiBaseUrl: Any OpenAI-compatible endpoint. Default is DeepSeek
+    aiModel: Must be a multimodal model that accepts images
+    aiPagesPerBatch: More pages per request is faster, but a failure wastes more work
+    aiRenderLongSide: Longer side of each rendered page. Bigger reads small headings better but costs more tokens
     allowInsecureConnections: (Not recommended) Allow Saber to connect to servers with self-signed/untrusted certificates
     preferGreyscale: For e-ink displays
     autoClearWhiteboardOnExit: Clears the whiteboard after you exit the app
     disableEraserAfterUse: Automatically switches back to the pen after using the eraser
     maxImageSize: Larger images will be compressed
+    textBoxOpacity: How see-through floating text boxes are; lower shows more of the ink underneath
+    gridDensity: Lower is denser; only affects the grid and dot patterns
     hideFingerDrawing:
       shown: Prevents accidental toggling
       fixedOn: Finger drawing is fixed as enabled
@@ -170,6 +197,7 @@ settings:
     title: Reset this setting?
     button: Reset
   resyncEverything: Resync everything
+  downloadFromServer: Download from server
   openDataDir: Open Saber folder
   customDataDir:
     cancel: Cancel
@@ -204,6 +232,13 @@ login:
     serverUrl: Server URL
     loginWithSaber: Login with Saber
     loginWithNextcloud: Login with Nextcloud
+    username: Username
+    password: Password
+    login: Log in
+    checking: Checking…
+    serverUrlHint: e.g. https://your-nas.synology.me:5006
+    wrongCredentials: Wrong username or password
+    loginFailed: 'Login failed: $error'
     loginFlow:
       pleaseAuthorize: Please authorize Saber to access your Nextcloud account
       followPrompts: Please follow the prompts in the Nextcloud interface
@@ -268,12 +303,20 @@ update:
   update: Update
   downloadNotAvailableYet: The download isn't available yet for your platform. Please check back shortly.
 editor:
+  eraser:
+    mode: Eraser type
+    modeStroke: Stroke
+    modeCircle: Round
+    modeSquare: Square
+    size: Size
   toolbar:
     toggleColors: Toggle colors (Ctrl C)
     select: Select
     toggleEraser: Toggle eraser (Ctrl E)
     photo: Images
+    takePhoto: Take photo
     text: Text
+    insertTextBox: Insert text box
     toggleFingerDrawing: Toggle finger drawing (Ctrl F)
     undo: Undo
     redo: Redo
@@ -373,5 +416,28 @@ editor:
     unlockAxisAlignedPan: Unlock panning to horizontal or vertical
     lockAxisAlignedPan: Lock panning to horizontal or vertical
   pages: Pages
+  hideToolbar: Hide the toolbar
+  showToolbar: Show the toolbar
+  insertMath: Insert formula
+  mathTex: LaTeX formula
+  mathEmpty: Type a formula first
+  mathInvalid: Can't parse this formula — check the brackets
+  goToPage: Go to page
+  pageNumber: Page number
+  pageNumberOutOfRange: Enter a page number between 1 and $max
+  previousPage: Previous page
+  nextPage: Next page
+  outline:
+    title: Outline
+    empty: No outline yet
+    emptyHint: Analyse the pages with AI to build a tappable table of contents
+    generate: Generate outline
+    regenerate: Regenerate
+    generating: Analysing…
+    progress: $done / $total pages
+    cancel: Cancel
+    fromBookmarks: From the PDF's own bookmarks
+    fromAi: Generated by AI
+    failed: Outline generation failed
   untitled: Untitled
   needsToSaveBeforeExiting: Saving your changes… You can safely exit the editor when it's done

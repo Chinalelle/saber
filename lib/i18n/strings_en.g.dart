@@ -127,6 +127,8 @@ class Translations$settings$en {
 	final Translations _root; // ignore: unused_field
 
 	// Translations
+	late final Translations$settings$infiniteCanvasPatterns$en infiniteCanvasPatterns = Translations$settings$infiniteCanvasPatterns$en.internal(_root);
+	late final Translations$settings$infiniteCanvasTextures$en infiniteCanvasTextures = Translations$settings$infiniteCanvasTextures$en.internal(_root);
 	late final Translations$settings$prefCategories$en prefCategories = Translations$settings$prefCategories$en.internal(_root);
 	late final Translations$settings$prefLabels$en prefLabels = Translations$settings$prefLabels$en.internal(_root);
 	late final Translations$settings$prefDescriptions$en prefDescriptions = Translations$settings$prefDescriptions$en.internal(_root);
@@ -147,6 +149,9 @@ class Translations$settings$en {
 
 	/// en: 'Resync everything'
 	String get resyncEverything => 'Resync everything';
+
+	/// en: 'Download from server'
+	String get downloadFromServer => 'Download from server';
 
 	/// en: 'Open Saber folder'
 	String get openDataDir => 'Open Saber folder';
@@ -304,6 +309,7 @@ class Translations$editor$en {
 	final Translations _root; // ignore: unused_field
 
 	// Translations
+	late final Translations$editor$eraser$en eraser = Translations$editor$eraser$en.internal(_root);
 	late final Translations$editor$toolbar$en toolbar = Translations$editor$toolbar$en.internal(_root);
 	late final Translations$editor$pens$en pens = Translations$editor$pens$en.internal(_root);
 	late final Translations$editor$penOptions$en penOptions = Translations$editor$penOptions$en.internal(_root);
@@ -318,6 +324,41 @@ class Translations$editor$en {
 
 	/// en: 'Pages'
 	String get pages => 'Pages';
+
+	/// en: 'Hide the toolbar'
+	String get hideToolbar => 'Hide the toolbar';
+
+	/// en: 'Show the toolbar'
+	String get showToolbar => 'Show the toolbar';
+
+	/// en: 'Insert formula'
+	String get insertMath => 'Insert formula';
+
+	/// en: 'LaTeX formula'
+	String get mathTex => 'LaTeX formula';
+
+	/// en: 'Type a formula first'
+	String get mathEmpty => 'Type a formula first';
+
+	/// en: 'Can't parse this formula — check the brackets'
+	String get mathInvalid => 'Can\'t parse this formula — check the brackets';
+
+	/// en: 'Go to page'
+	String get goToPage => 'Go to page';
+
+	/// en: 'Page number'
+	String get pageNumber => 'Page number';
+
+	/// en: 'Enter a page number between 1 and $max'
+	String pageNumberOutOfRange({required Object max}) => 'Enter a page number between 1 and ${max}';
+
+	/// en: 'Previous page'
+	String get previousPage => 'Previous page';
+
+	/// en: 'Next page'
+	String get nextPage => 'Next page';
+
+	late final Translations$editor$outline$en outline = Translations$editor$outline$en.internal(_root);
 
 	/// en: 'Untitled'
 	String get untitled => 'Untitled';
@@ -396,6 +437,9 @@ class Translations$home$create$en {
 
 	/// en: 'New note'
 	String get newNote => 'New note';
+
+	/// en: 'New infinite canvas'
+	String get newInfiniteCanvas => 'New infinite canvas';
 
 	/// en: 'Import note'
 	String get importNote => 'Import note';
@@ -617,6 +661,39 @@ class Translations$sentry$consent$en {
 	late final Translations$sentry$consent$answers$en answers = Translations$sentry$consent$answers$en.internal(_root);
 }
 
+// Path: settings.infiniteCanvasPatterns
+class Translations$settings$infiniteCanvasPatterns$en {
+	Translations$settings$infiniteCanvasPatterns$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'None'
+	String get none => 'None';
+
+	/// en: 'Grid'
+	String get grid => 'Grid';
+
+	/// en: 'Dots'
+	String get dots => 'Dots';
+}
+
+// Path: settings.infiniteCanvasTextures
+class Translations$settings$infiniteCanvasTextures$en {
+	Translations$settings$infiniteCanvasTextures$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Smooth'
+	String get smooth => 'Smooth';
+
+	/// en: 'Paper'
+	String get paper => 'Paper';
+}
+
 // Path: settings.prefCategories
 class Translations$settings$prefCategories$en {
 	Translations$settings$prefCategories$en.internal(this._root);
@@ -634,6 +711,12 @@ class Translations$settings$prefCategories$en {
 	/// en: 'Editor'
 	String get editor => 'Editor';
 
+	/// en: 'Infinite canvas'
+	String get infiniteCanvas => 'Infinite canvas';
+
+	/// en: 'AI outline'
+	String get aiOutline => 'AI outline';
+
 	/// en: 'Performance'
 	String get performance => 'Performance';
 
@@ -648,6 +731,33 @@ class Translations$settings$prefLabels$en {
 	final Translations _root; // ignore: unused_field
 
 	// Translations
+
+	/// en: 'API key'
+	String get aiApiKey => 'API key';
+
+	/// en: 'API endpoint'
+	String get aiBaseUrl => 'API endpoint';
+
+	/// en: 'Model'
+	String get aiModel => 'Model';
+
+	/// en: 'Pages per request'
+	String get aiPagesPerBatch => 'Pages per request';
+
+	/// en: 'Page render size'
+	String get aiRenderLongSide => 'Page render size';
+
+	/// en: 'Background colour'
+	String get infiniteCanvasColor => 'Background colour';
+
+	/// en: 'Background pattern'
+	String get infiniteCanvasPattern => 'Background pattern';
+
+	/// en: 'Background texture'
+	String get infiniteCanvasTexture => 'Background texture';
+
+	/// en: 'Grid density'
+	String get gridDensity => 'Grid density';
 
 	/// en: 'Language'
 	String get locale => 'Language';
@@ -690,6 +800,9 @@ class Translations$settings$prefLabels$en {
 
 	/// en: 'Maximum image size'
 	String get maxImageSize => 'Maximum image size';
+
+	/// en: 'Text box opacity'
+	String get textBoxOpacity => 'Text box opacity';
 
 	/// en: 'Auto-clear the whiteboard'
 	String get autoClearWhiteboardOnExit => 'Auto-clear the whiteboard';
@@ -742,6 +855,21 @@ class Translations$settings$prefDescriptions$en {
 	/// en: 'Increases legibility for users with low vision'
 	String get hyperlegibleFont => 'Increases legibility for users with low vision';
 
+	/// en: 'Needed to analyse pages. Stored on this device only and never written into the note file'
+	String get aiApiKey => 'Needed to analyse pages. Stored on this device only and never written into the note file';
+
+	/// en: 'Any OpenAI-compatible endpoint. Default is DeepSeek'
+	String get aiBaseUrl => 'Any OpenAI-compatible endpoint. Default is DeepSeek';
+
+	/// en: 'Must be a multimodal model that accepts images'
+	String get aiModel => 'Must be a multimodal model that accepts images';
+
+	/// en: 'More pages per request is faster, but a failure wastes more work'
+	String get aiPagesPerBatch => 'More pages per request is faster, but a failure wastes more work';
+
+	/// en: 'Longer side of each rendered page. Bigger reads small headings better but costs more tokens'
+	String get aiRenderLongSide => 'Longer side of each rendered page. Bigger reads small headings better but costs more tokens';
+
 	/// en: '(Not recommended) Allow Saber to connect to servers with self-signed/untrusted certificates'
 	String get allowInsecureConnections => '(Not recommended) Allow Saber to connect to servers with self-signed/untrusted certificates';
 
@@ -756,6 +884,12 @@ class Translations$settings$prefDescriptions$en {
 
 	/// en: 'Larger images will be compressed'
 	String get maxImageSize => 'Larger images will be compressed';
+
+	/// en: 'How see-through floating text boxes are; lower shows more of the ink underneath'
+	String get textBoxOpacity => 'How see-through floating text boxes are; lower shows more of the ink underneath';
+
+	/// en: 'Lower is denser; only affects the grid and dot patterns'
+	String get gridDensity => 'Lower is denser; only affects the grid and dot patterns';
 
 	late final Translations$settings$prefDescriptions$hideFingerDrawing$en hideFingerDrawing = Translations$settings$prefDescriptions$hideFingerDrawing$en.internal(_root);
 
@@ -936,6 +1070,27 @@ class Translations$login$ncLoginStep$en {
 	/// en: 'Login with Nextcloud'
 	String get loginWithNextcloud => 'Login with Nextcloud';
 
+	/// en: 'Username'
+	String get username => 'Username';
+
+	/// en: 'Password'
+	String get password => 'Password';
+
+	/// en: 'Log in'
+	String get login => 'Log in';
+
+	/// en: 'Checking…'
+	String get checking => 'Checking…';
+
+	/// en: 'e.g. https://your-nas.synology.me:5006'
+	String get serverUrlHint => 'e.g. https://your-nas.synology.me:5006';
+
+	/// en: 'Wrong username or password'
+	String get wrongCredentials => 'Wrong username or password';
+
+	/// en: 'Login failed: $error'
+	String loginFailed({required Object error}) => 'Login failed: ${error}';
+
 	late final Translations$login$ncLoginStep$loginFlow$en loginFlow = Translations$login$ncLoginStep$loginFlow$en.internal(_root);
 }
 
@@ -1047,6 +1202,30 @@ class Translations$profile$faq$3$en {
 	String get a => 'Tap on the "${_root.profile.quickLinks.deleteAccount}" button above, and login if needed.\nIf you are using the official Saber server, your account will be deleted after a 1 week grace period. You can contact me at adilhanney@disroot.org during this period to cancel the deletion.\nIf you are using a third party server, there might not be an option to delete your account: you\'ll need to consult the server\'s privacy policy for more information.';
 }
 
+// Path: editor.eraser
+class Translations$editor$eraser$en {
+	Translations$editor$eraser$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Eraser type'
+	String get mode => 'Eraser type';
+
+	/// en: 'Stroke'
+	String get modeStroke => 'Stroke';
+
+	/// en: 'Round'
+	String get modeCircle => 'Round';
+
+	/// en: 'Square'
+	String get modeSquare => 'Square';
+
+	/// en: 'Size'
+	String get size => 'Size';
+}
+
 // Path: editor.toolbar
 class Translations$editor$toolbar$en {
 	Translations$editor$toolbar$en.internal(this._root);
@@ -1067,8 +1246,14 @@ class Translations$editor$toolbar$en {
 	/// en: 'Images'
 	String get photo => 'Images';
 
+	/// en: 'Take photo'
+	String get takePhoto => 'Take photo';
+
 	/// en: 'Text'
 	String get text => 'Text';
+
+	/// en: 'Insert text box'
+	String get insertTextBox => 'Insert text box';
 
 	/// en: 'Toggle finger drawing (Ctrl F)'
 	String get toggleFingerDrawing => 'Toggle finger drawing (Ctrl F)';
@@ -1384,6 +1569,48 @@ class Translations$editor$hud$en {
 
 	/// en: 'Lock panning to horizontal or vertical'
 	String get lockAxisAlignedPan => 'Lock panning to horizontal or vertical';
+}
+
+// Path: editor.outline
+class Translations$editor$outline$en {
+	Translations$editor$outline$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Outline'
+	String get title => 'Outline';
+
+	/// en: 'No outline yet'
+	String get empty => 'No outline yet';
+
+	/// en: 'Analyse the pages with AI to build a tappable table of contents'
+	String get emptyHint => 'Analyse the pages with AI to build a tappable table of contents';
+
+	/// en: 'Generate outline'
+	String get generate => 'Generate outline';
+
+	/// en: 'Regenerate'
+	String get regenerate => 'Regenerate';
+
+	/// en: 'Analysing…'
+	String get generating => 'Analysing…';
+
+	/// en: '$done / $total pages'
+	String progress({required Object done, required Object total}) => '${done} / ${total} pages';
+
+	/// en: 'Cancel'
+	String get cancel => 'Cancel';
+
+	/// en: 'From the PDF's own bookmarks'
+	String get fromBookmarks => 'From the PDF\'s own bookmarks';
+
+	/// en: 'Generated by AI'
+	String get fromAi => 'Generated by AI';
+
+	/// en: 'Outline generation failed'
+	String get failed => 'Outline generation failed';
 }
 
 // Path: sentry.consent.description
