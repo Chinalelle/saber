@@ -7,84 +7,95 @@ import 'package:saber/components/canvas/_stroke.dart';
 import 'package:saber/data/tools/eraser.dart';
 import 'package:sbn/has_size.dart';
 
+/// 这个文件原来测的是 `checkForOverlappingStrokes` / `onDragEnd`，
+/// 那套 API 在「橡皮擦三模式」那次重构里被 `Eraser.eraseAt` 取代了，
+/// 所以这里按新 API 重写。**用例本身没动** ——
+/// 「1 倍 size 以内要擦掉、1.1 倍 size 以外不能碰」这组边界还是值得钉住的。
 final _options = StrokeOptions(
-  size: 1, // small size so we have more precision in test
+  size: 1, // 尺寸小一点，测试里精度更高
 );
 const _eraserPos = Offset(50, 50);
 
 void main() {
-  test('Test that the eraser tool erases the correct strokes', () {
+  test('笔迹模式：擦除范围内的整条被删掉，范围外的一条不动', () {
     final eraser = Eraser(size: 10);
 
     final List<Stroke> strokesToErase = [
-      // center
+      // 正中
       _strokeWithPoint(_eraserPos),
 
-      // 1 size downwards from center
+      // 正下 1 个 size
       _strokeWithPoint(_eraserPos + const Offset(0, 1) * eraser.size),
 
-      // 1 size right from center
+      // 正右 1 个 size
       _strokeWithPoint(_eraserPos + const Offset(1, 0) * eraser.size),
 
-      // 1 size diagonally from center
+      // 斜向 1 个 sqrt(size)
       _strokeWithPoint(_eraserPos + const Offset(1, 1) * sqrt(eraser.size)),
 
-      // 0.5 sizes right from center
+      // 正右 0.5 个 size
       _strokeWithPoint(_eraserPos + const Offset(0.5, 0) * eraser.size),
 
-      // straight line that passes through center
+      // 一条穿过正中的长线
       _strokeWithPoint(_eraserPos + const Offset(-20, -20) * eraser.size)
         ..addPoint(_eraserPos + const Offset(20, 20) * eraser.size)
         ..addPoint(_eraserPos + const Offset(20, 20) * eraser.size),
     ];
 
     final List<Stroke> strokesToKeep = [
-      // > 1 size downwards from center
+      // 正下超过 1 个 size
       _strokeWithPoint(_eraserPos + const Offset(0, 1.1) * eraser.size),
 
-      // > 1 size right from center
+      // 正右超过 1 个 size
       _strokeWithPoint(_eraserPos + const Offset(1.1, 0) * eraser.size),
 
-      // > 1 size diagonally from center
+      // 斜向超过 1 个 size
       _strokeWithPoint(_eraserPos + const Offset(1, 1) * eraser.size),
 
-      // 2 sizes right from center
+      // 正右 2 个 size
       _strokeWithPoint(_eraserPos + const Offset(2, 0) * eraser.size),
     ];
 
     final strokes = <Stroke>[...strokesToErase, ...strokesToKeep];
-    final List<Stroke> erased = eraser.checkForOverlappingStrokes(
-      _eraserPos,
-      strokes,
-    );
+    final result = eraser.eraseAt(_eraserPos, strokes);
 
     for (final stroke in strokesToErase) {
       expect(
-        erased,
+        result.removed,
         contains(stroke),
-        reason: 'Stroke should be erased: $stroke',
+        reason: '应该被擦掉: $stroke',
       );
     }
 
     for (final stroke in strokesToKeep) {
       expect(
-        erased,
+        result.removed,
         isNot(contains(stroke)),
-        reason: 'Stroke should not be erased: $stroke',
+        reason: '不该被擦掉: $stroke',
       );
     }
 
-    final List<Stroke> erasedStrokes = eraser.onDragEnd();
-    expect(
-      erasedStrokes.length,
-      strokesToErase.length,
-      reason: 'The correct number of strokes should have been erased',
-    );
-    expect(
-      erasedStrokes,
-      everyElement(strokesToErase.contains),
-      reason: 'The correct strokes should have been erased',
-    );
+    // 笔迹模式是整条删除，不会切出新的分段
+    expect(result.added, isEmpty, reason: '笔迹模式不该产生分段');
+  });
+
+  test('笔迹模式：在同一个位置再擦一遍，已经被移除的笔迹不再出现', () {
+    final eraser = Eraser(size: 10);
+
+    final strokes = [
+      _strokeWithPoint(_eraserPos),
+      _strokeWithPoint(_eraserPos + const Offset(0, 1) * eraser.size),
+      _strokeWithPoint(_eraserPos + const Offset(5, 0) * eraser.size),
+    ];
+
+    final first = eraser.eraseAt(_eraserPos, strokes);
+    expect(first.removed, hasLength(2));
+
+    // 调用方会把擦掉的移出页面，剩下那些再擦一次不该有任何变化
+    final remaining = strokes.where((s) => !first.removed.contains(s)).toList();
+    final second = eraser.eraseAt(_eraserPos, remaining);
+    expect(second.removed, isEmpty);
+    expect(second.added, isEmpty);
   });
 }
 
