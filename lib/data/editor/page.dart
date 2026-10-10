@@ -21,8 +21,33 @@ class EditorPage extends ChangeNotifier implements HasSize {
   static const double defaultHeight = defaultWidth * 1.4;
   static const defaultSize = Size(defaultWidth, defaultHeight);
 
+  /// 「无边画布」用的那一整块大画布。
+  ///
+  /// 这里给的是**起始**大小，不是上限：拖到边上时 `growTo` 会把它接出去
+  /// （见 `CanvasGestureDetector._growInfiniteCanvasIfNeeded`），
+  /// 所以用户实际感受不到这块纸有边。坐标系和序列化都不用动。
+  static const infiniteSize = Size(8000, 8000);
+
+  /// 把画布长大到至少 [newSize]（只增不减），并通知重绘。
+  ///
+  /// 坐标系原点不动，所以已有笔迹/图片/文本框的坐标都不受影响，
+  /// 只是"纸"往右下方又接了一大块。
+  void growTo(Size newSize) {
+    if (newSize.width <= size.width && newSize.height <= size.height) return;
+    size = Size(
+      max(size.width, newSize.width),
+      max(size.height, newSize.height),
+    );
+    notifyListeners();
+  }
+
+  /// 页面尺寸。文档页是 1000×1400，**无边画布是 6000×6000**。
+  ///
+  /// 故意不做成 final：从旧笔记/普通笔记升成无边画布时要把尺寸顶上去，
+  /// 否则画布只比一个屏幕宽一点点，横向几乎没有平移余量
+  /// （表现就是"只能上下拖、不能左右拖"）。
   @override
-  final Size size;
+  Size size;
 
   late final CanvasKey innerCanvasKey = CanvasKey();
   RenderBox? _renderBox;
@@ -49,11 +74,16 @@ class EditorPage extends ChangeNotifier implements HasSize {
   final List<EditorImage> images;
   final QuillStruct quill;
 
+  /// 页面上的浮动文本框。「无边画布」主要靠它写字：
+  /// 想在哪写就在哪放一个框，而不是整页铺一层文本。
+  final List<EditorTextBox> textBoxes;
+
   EditorImage? backgroundImage;
 
   bool get isEmpty =>
       strokes.isEmpty &&
       images.isEmpty &&
+      textBoxes.every((box) => box.isEmpty) &&
       quill.controller.document.isEmpty() &&
       backgroundImage == null;
   bool get isNotEmpty => !isEmpty;
@@ -106,6 +136,7 @@ class EditorPage extends ChangeNotifier implements HasSize {
     double? height,
     List<Stroke>? strokes,
     List<EditorImage>? images,
+    List<EditorTextBox>? textBoxes,
     QuillStruct? quill,
     this.backgroundImage,
   }) : assert(
@@ -116,6 +147,7 @@ class EditorPage extends ChangeNotifier implements HasSize {
        strokes = strokes ?? [],
        laserStrokes = [],
        images = images ?? [],
+       textBoxes = textBoxes ?? [],
        quill =
            quill ??
            QuillStruct(
@@ -157,6 +189,11 @@ class EditorPage extends ChangeNotifier implements HasSize {
             : QuillController.basic(),
         focusNode: FocusNode(debugLabel: 'Quill Focus Node'),
       ),
+      textBoxes: [
+        for (final box in (json['tb'] as List? ?? const []))
+          if (box is Map)
+            EditorTextBox.fromJson(box.cast<String, dynamic>()),
+      ],
       backgroundImage: json['b'] != null
           ? parseImageJson(
               json['b'],
@@ -176,6 +213,8 @@ class EditorPage extends ChangeNotifier implements HasSize {
       's': strokes.map((stroke) => stroke.toJson()).toList(),
     if (images.isNotEmpty)
       'i': images.map((image) => image.toJson(assets)).toList(),
+    if (textBoxes.isNotEmpty)
+      'tb': textBoxes.map((box) => box.toJson()).toList(),
     if (!quill.controller.document.isEmpty())
       'q': quill.controller.document.toDelta().toJson(),
     if (backgroundImage != null) 'b': backgroundImage?.toJson(assets),
@@ -290,6 +329,9 @@ class EditorPage extends ChangeNotifier implements HasSize {
   @override
   void dispose() {
     quill.dispose();
+    for (final box in textBoxes) {
+      box.dispose();
+    }
     _pencilShader?.dispose();
     isRendered = false;
     for (final image in images) {
@@ -307,6 +349,9 @@ class EditorPage extends ChangeNotifier implements HasSize {
   /// exclusive to the cloned page.
   void disposeClonedData() {
     quill.dispose();
+    for (final box in textBoxes) {
+      box.dispose();
+    }
     _pencilShader?.dispose();
     isRendered = false;
     super.dispose();
@@ -316,12 +361,14 @@ class EditorPage extends ChangeNotifier implements HasSize {
     Size? size,
     List<Stroke>? strokes,
     List<EditorImage>? images,
+    List<EditorTextBox>? textBoxes,
     QuillStruct? quill,
     EditorImage? backgroundImage,
   }) => EditorPage(
     size: size ?? this.size,
     strokes: strokes ?? this.strokes,
     images: images ?? this.images,
+    textBoxes: textBoxes ?? this.textBoxes,
     quill: quill ?? this.quill,
     backgroundImage: backgroundImage ?? this.backgroundImage,
   );
@@ -338,6 +385,7 @@ class EditorPage extends ChangeNotifier implements HasSize {
       strokes: rasterizeAllStrokes
           ? strokes
           : strokes.where(EditorExporter.shouldRasterizeStroke).toList(),
+      textBoxes: [for (final box in textBoxes) box.clone()],
       quill: quill.cloneForScreenshot(),
     );
   }
@@ -362,5 +410,81 @@ class QuillStruct {
       selection: const TextSelection.collapsed(offset: 0),
     ),
     focusNode: FocusNode(debugLabel: 'Screenshot Quill Focus Node'),
+  );
+}
+
+/// 一个浮动文本框：页面上的一块固定位置和大小的富文本。
+///
+/// 位置和尺寸都用页面的逻辑坐标（跟笔迹、图片一致），数据存在
+/// [EditorPage.textBoxes] 里。这是「无边画布」里书写文字的方式 ——
+/// 想在哪写就在哪放一个框，而不是整页铺一层文本。
+class EditorTextBox {
+  new({
+    required this.id,
+    required this.position,
+    required this.size,
+    QuillController? controller,
+  }) : quill = QuillStruct(
+         controller: controller ?? QuillController.basic(),
+         focusNode: FocusNode(debugLabel: 'Text box #$id focus node'),
+       );
+
+  /// 同一页内唯一，方便撤销/重做时认人。
+  final int id;
+
+  /// 页面坐标下的左上角。
+  Offset position;
+
+  /// 文本框大小。
+  Size size;
+
+  final QuillStruct quill;
+
+  /// 新建时给的默认尺寸。
+  static const defaultSize = Size(360, 160);
+
+  bool get isEmpty => quill.controller.document.isEmpty();
+
+  void dispose() => quill.dispose();
+
+  Map<String, dynamic> toJson() => {
+    'i': id,
+    'x': position.dx,
+    'y': position.dy,
+    'w': size.width,
+    'h': size.height,
+    'q': quill.controller.document.toDelta().toJson(),
+  };
+
+  factory fromJson(Map<String, dynamic> json) {
+    final delta = json['q'];
+    return EditorTextBox(
+      id: (json['i'] as num?)?.toInt() ?? 0,
+      position: Offset(
+        (json['x'] as num?)?.toDouble() ?? 0,
+        (json['y'] as num?)?.toDouble() ?? 0,
+      ),
+      size: Size(
+        (json['w'] as num?)?.toDouble() ?? defaultSize.width,
+        (json['h'] as num?)?.toDouble() ?? defaultSize.height,
+      ),
+      controller: delta is List
+          ? QuillController(
+              document: Document.fromJson(delta),
+              selection: const TextSelection.collapsed(offset: 0),
+            )
+          : null,
+    );
+  }
+
+  /// 复制一份（内容一样，但 Quill 控制器是独立的）。
+  EditorTextBox clone() => EditorTextBox(
+    id: id,
+    position: position,
+    size: size,
+    controller: QuillController(
+      document: Document.fromJson(quill.controller.document.toDelta().toJson()),
+      selection: const TextSelection.collapsed(offset: 0),
+    ),
   );
 }

@@ -10,10 +10,12 @@ import 'package:saber/components/canvas/_rectangle_stroke.dart';
 import 'package:saber/components/canvas/_stroke.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/extensions/color_extensions.dart';
+import 'package:saber/data/tools/eraser.dart';
 import 'package:saber/data/tools/highlighter.dart';
 import 'package:saber/data/tools/laser_pointer.dart';
 import 'package:saber/data/tools/select.dart';
 import 'package:saber/data/tools/shape_pen.dart';
+import 'package:sbn/eraser_mode.dart';
 
 class CanvasPainter extends CustomPainter {
   const new({
@@ -55,6 +57,7 @@ class CanvasPainter extends CustomPainter {
     _drawCurrentStroke(canvas);
     _drawDetectedShape(canvas);
     _drawSelection(canvas);
+    _drawEraserPreview(canvas);
     _drawPageIndicator(canvas, size);
   }
 
@@ -228,8 +231,33 @@ class CanvasPainter extends CustomPainter {
     }
   }
 
-  void _drawSelection(Canvas canvas) {
-    if (currentSelection == null) return;
+  /// 圆／方擦子按下时，在笔尖处画一个与实际擦除区域**等大**的空心轮廓。
+  void _drawEraserPreview(Canvas canvas) {
+    final eraser = Eraser.currentEraser;
+    final pos = eraser.previewPosition;
+    if (pos == null || eraser.mode == EraserMode.stroke) return;
+
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      // 除以缩放比例，这样不管画布放大多少倍，预览线看起来都一样粗
+      ..strokeWidth = 1.5 / currentScale
+      ..color = primaryColor.withValues(alpha: .9);
+
+    if (eraser.mode == EraserMode.square) {
+      canvas.drawRect(
+        Rect.fromCenter(
+          center: pos,
+          width: eraser.size * 2,
+          height: eraser.size * 2,
+        ),
+        paint,
+      );
+    } else {
+      canvas.drawCircle(pos, eraser.size, paint);
+    }
+  }
+
+  void _drawSelection(Canvas canvas) {    if (currentSelection == null) return;
 
     // draw translucent fill
     canvas.drawPath(

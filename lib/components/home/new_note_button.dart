@@ -75,6 +75,22 @@ class _NewNoteButtonState extends State<NewNoteButton> {
             }
           },
         ),
+        // 无边画布：一整块可以随便写、随便平移缩放的画布，不是一页页的文档
+        SpeedDialChild(
+          child: const Icon(Icons.all_inclusive),
+          label: t.home.create.newInfiniteCanvas,
+          onTap: () async {
+            if (widget.path == null) {
+              context.push(RoutePaths.newInfiniteCanvas());
+            } else {
+              final newFilePath = await FileManager.newFilePath(
+                '${widget.path}/',
+              );
+              if (!context.mounted) return;
+              context.push(RoutePaths.newInfiniteCanvas(newFilePath));
+            }
+          },
+        ),
         SpeedDialChild(
           child: const Icon(Icons.note_add),
           label: t.home.create.importNote,

@@ -121,8 +121,10 @@ class _InnerCanvasState extends State<InnerCanvas> {
               return widget.coreInfo.backgroundPattern;
             }
           }(),
+          texture: widget.coreInfo.canvasTexture,
           lineHeight: widget.coreInfo.lineHeight,
           lineThickness: widget.coreInfo.lineThickness,
+          gridDensity: stows.gridDensity.value,
           primaryColor: colorScheme.primary,
           secondaryColor: colorScheme.secondary,
         ),

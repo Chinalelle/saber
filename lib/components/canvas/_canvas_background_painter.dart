@@ -1,15 +1,20 @@
+import 'dart:ui' show PointMode;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:saber/data/extensions/color_extensions.dart';
 import 'package:sbn/canvas_background_pattern.dart';
+import 'package:sbn/canvas_texture.dart';
 
 class CanvasBackgroundPainter extends CustomPainter {
   const new({
     required this.invert,
     required this.backgroundColor,
     this.backgroundPattern = .none,
+    this.texture = .smooth,
     required this.lineHeight,
     required this.lineThickness,
+    this.gridDensity = 1.0,
     this.primaryColor = Colors.blue,
     this.secondaryColor = Colors.red,
     this.preview = false,
@@ -21,9 +26,18 @@ class CanvasBackgroundPainter extends CustomPainter {
   /// The pattern to use for the background. See [CanvasBackgroundPatterns].
   final CanvasBackgroundPattern backgroundPattern;
 
+  /// 画布表面的质感（光滑／纸张）。
+  final CanvasTexture texture;
+
   /// The height between each line in the background pattern
   final int lineHeight;
   final int lineThickness;
+
+  /// 方格／点阵的疏密倍率：小于 1 更密。
+  ///
+  /// 只管 [CanvasBackgroundPattern.grid] 和 [CanvasBackgroundPattern.dots]；
+  /// 横线纸、五线谱、康奈尔笔记这些还是老老实实按 lineHeight 走。
+  final double gridDensity;
   final Color primaryColor, secondaryColor;
 
   /// Whether to draw the background pattern in a preview mode (more opaque).
@@ -48,6 +62,7 @@ class CanvasBackgroundPainter extends CustomPainter {
       pattern: backgroundPattern,
       size: size,
       lineHeight: lineHeight,
+      gridDensity: gridDensity,
     )) {
       if (element.secondaryColor) {
         paint.color = secondaryColor.withValues(alpha: preview ? 0.5 : 0.2);
@@ -58,13 +73,56 @@ class CanvasBackgroundPainter extends CustomPainter {
       if (element.isLine) {
         canvas.drawLine(element.start, element.end, paint);
       } else {
-        canvas.drawCircle(element.start, paint.strokeWidth * 4 / 3, paint);
+        // 点跟着疏密一起缩，不然密了之后点会糊成一片
+        canvas.drawCircle(
+          element.start,
+          paint.strokeWidth * 4 / 3 * gridDensity,
+          paint,
+        );
       }
     }
 
     if (backgroundPattern.requiresClipping) {
       canvas.restore();
     }
+
+    if (texture == .paper) _paintPaperGrain(canvas);
+  }
+
+  /// 纸张质感：撒一层很淡的颗粒。
+  ///
+  /// 只画当前裁剪区域内的点 —— 无边画布有 6000×6000，整块画会卡死。
+  void _paintPaperGrain(Canvas canvas) {
+    final clip = canvas.getLocalClipBounds();
+    if (clip.isEmpty) return;
+
+    const step = 4.0;
+    final points = <Offset>[];
+    // 固定种子的伪随机：同一块区域每次画出来都一样，不会闪
+    var seed = 0x9E3779B9;
+    double next() {
+      seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+      return (seed % 1000) / 1000;
+    }
+
+    for (double y = clip.top; y < clip.bottom; y += step) {
+      for (double x = clip.left; x < clip.right; x += step) {
+        final jx = next();
+        final jy = next();
+        if (next() > .5) continue;
+        points.add(Offset(x + jx * step, y + jy * step));
+      }
+    }
+    if (points.isEmpty) return;
+
+    canvas.drawPoints(
+      PointMode.points,
+      points,
+      Paint()
+        ..color = (invert ? Colors.white : Colors.black).withValues(alpha: .05)
+        ..strokeWidth = .8
+        ..strokeCap = StrokeCap.round,
+    );
   }
 
   @override
@@ -73,7 +131,9 @@ class CanvasBackgroundPainter extends CustomPainter {
       oldDelegate.invert != invert ||
       oldDelegate.backgroundColor != backgroundColor ||
       oldDelegate.backgroundPattern != backgroundPattern ||
+      oldDelegate.texture != texture ||
       oldDelegate.lineHeight != lineHeight ||
+      oldDelegate.gridDensity != gridDensity ||
       oldDelegate.primaryColor != primaryColor ||
       oldDelegate.secondaryColor != secondaryColor;
 
@@ -81,6 +141,7 @@ class CanvasBackgroundPainter extends CustomPainter {
     required CanvasBackgroundPattern pattern,
     required Size size,
     required int lineHeight,
+    double gridDensity = 1.0,
   }) sync* {
     switch (pattern) {
       case .none:
@@ -114,23 +175,25 @@ class CanvasBackgroundPainter extends CustomPainter {
           );
         }
       case .grid:
-        for (double y = lineHeight * 2; y < size.height; y += lineHeight) {
+        final step = lineHeight * gridDensity;
+        for (double y = step * 2; y < size.height; y += step) {
           yield PatternElement(
             Offset(0, y),
             Offset(size.width, y),
             isLine: true,
           );
         }
-        for (double x = 0; x < size.width; x += lineHeight) {
+        for (double x = 0; x < size.width; x += step) {
           yield PatternElement(
-            Offset(x, lineHeight * 2),
+            Offset(x, step * 2),
             Offset(x, size.height),
             isLine: true,
           );
         }
       case .dots:
-        for (double y = lineHeight * 2; y <= size.height; y += lineHeight) {
-          for (double x = 0; x <= size.width; x += lineHeight) {
+        final step = lineHeight * gridDensity;
+        for (double y = step * 2; y <= size.height; y += step) {
+          for (double x = 0; x <= size.width; x += step) {
             yield PatternElement(Offset(x, y), Offset(x, y), isLine: false);
           }
         }

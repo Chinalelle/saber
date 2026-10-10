@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:saber/components/canvas/_asset_cache.dart';
 import 'package:saber/components/canvas/_stroke.dart';
 import 'package:saber/components/canvas/image/editor_image.dart';
+import 'package:saber/data/editor/outline_entry.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/file_manager/file_manager.dart';
 import 'package:saber/data/flavor_config.dart';
@@ -19,6 +20,7 @@ import 'package:saber/data/prefs.dart';
 import 'package:saber/data/tools/stroke_properties.dart';
 import 'package:saber/pages/editor/editor.dart';
 import 'package:sbn/canvas_background_pattern.dart';
+import 'package:sbn/canvas_texture.dart';
 import 'package:sbn/has_size.dart';
 import 'package:sbn/read_only_reason.dart';
 import 'package:worker_manager/worker_manager.dart';
@@ -68,9 +70,23 @@ class EditorCoreInfo {
   int nextImageId;
   Color? backgroundColor;
   CanvasBackgroundPattern backgroundPattern;
+
+  /// 这篇笔记是不是「无边画布」：一整块可以随便写、随便平移缩放的画布，
+  /// 而不是一页页的文档。默认 false（文档式）。
+  bool isInfiniteCanvas;
+
+  /// 无边画布的表面质感（光滑／纸张）。
+  CanvasTexture canvasTexture;
+
   int lineHeight;
   int lineThickness;
   List<EditorPage> pages;
+
+  /// 这份文档的大纲（AI／PDF 书签生成），条目点击可跳到对应页面。
+  ///
+  /// 序列化在 `'ol'` 键下。旧版本读到不认识的键会忽略，所以加了它不会让
+  /// 老版本 Saber 打不开新文件。
+  List<OutlineEntry> outline;
 
   /// Stores the current page index so that it can be restored when the file is reloaded.
   int? initialPageIndex;
@@ -85,6 +101,7 @@ class EditorCoreInfo {
         lineHeight: stows.lastLineHeight.value,
         lineThickness: stows.lastLineThickness.value,
         pages: [],
+        outline: const [],
         initialPageIndex: null,
         assetCache: null,
       ).._migrateOldStrokesAndImages(
@@ -102,9 +119,12 @@ class EditorCoreInfo {
   new({required this.filePath, this.readOnlyReason})
     : nextImageId = 0,
       backgroundPattern = stows.lastBackgroundPattern.value,
+      isInfiniteCanvas = false,
+      canvasTexture = CanvasTexture.smooth,
       lineHeight = stows.lastLineHeight.value,
       lineThickness = stows.lastLineThickness.value,
       pages = [],
+      outline = const [],
       assetCache = AssetCache();
 
   new _({
@@ -113,9 +133,12 @@ class EditorCoreInfo {
     required this.nextImageId,
     this.backgroundColor,
     required this.backgroundPattern,
+    this.isInfiniteCanvas = false,
+    this.canvasTexture = CanvasTexture.smooth,
     required this.lineHeight,
     required this.lineThickness,
     required this.pages,
+    this.outline = const [],
     required this.initialPageIndex,
     required AssetCache? assetCache,
   }) : assetCache = assetCache ?? AssetCache() {
@@ -180,8 +203,15 @@ class EditorCoreInfo {
         backgroundPattern: CanvasBackgroundPattern.fromName(
           json['p'] as String?,
         ),
+        isInfiniteCanvas: json['ic'] as bool? ?? false,
+        canvasTexture: CanvasTexture.fromName(json['ct'] as String?),
         lineHeight: json['l'] as int? ?? stows.lastLineHeight.value,
         lineThickness: json['lt'] as int? ?? stows.lastLineThickness.value,
+        outline: (json['ol'] as List?)
+                ?.whereType<Map>()
+                .map((e) => OutlineEntry.fromJson(e.cast<String, dynamic>()))
+                .toList() ??
+            const [],
         pages: _parsePagesJson(
           json['z'] as List?,
           inlineAssets: inlineAssets,
@@ -214,9 +244,12 @@ class EditorCoreInfo {
     required bool onlyFirstPage,
   }) : nextImageId = 0,
        backgroundPattern = .none,
+       isInfiniteCanvas = false,
+       canvasTexture = CanvasTexture.smooth,
        lineHeight = stows.lastLineHeight.value,
        lineThickness = stows.lastLineThickness.value,
        pages = [],
+       outline = const [],
        assetCache = AssetCache() {
     _migrateOldStrokesAndImages(
       fileVersion: 0,
@@ -478,9 +511,12 @@ class EditorCoreInfo {
       'ni': nextImageId,
       'b': backgroundColor?.toARGB32(),
       'p': backgroundPattern.name,
+      'ic': isInfiniteCanvas,
+      'ct': canvasTexture.name,
       'l': lineHeight,
       'lt': lineThickness,
       'z': pages.map((EditorPage page) => page.toJson(assets)).toList(),
+      'ol': outline.map((e) => e.toJson()).toList(),
       'c': initialPageIndex,
     };
 
@@ -540,9 +576,12 @@ class EditorCoreInfo {
     int? nextImageId,
     Color? backgroundColor,
     CanvasBackgroundPattern? backgroundPattern,
+    bool? isInfiniteCanvas,
+    CanvasTexture? canvasTexture,
     int? lineHeight,
     int? lineThickness,
     List<EditorPage>? pages,
+    List<OutlineEntry>? outline,
   }) {
     return EditorCoreInfo._(
       filePath: filePath ?? this.filePath,
@@ -550,9 +589,12 @@ class EditorCoreInfo {
       nextImageId: nextImageId ?? this.nextImageId,
       backgroundColor: backgroundColor ?? this.backgroundColor,
       backgroundPattern: backgroundPattern ?? this.backgroundPattern,
+      isInfiniteCanvas: isInfiniteCanvas ?? this.isInfiniteCanvas,
+      canvasTexture: canvasTexture ?? this.canvasTexture,
       lineHeight: lineHeight ?? this.lineHeight,
       lineThickness: lineThickness ?? this.lineThickness,
       pages: pages ?? this.pages,
+      outline: outline ?? this.outline,
       initialPageIndex: initialPageIndex,
       assetCache: assetCache,
     );

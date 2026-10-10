@@ -14,6 +14,17 @@ abstract class RoutePaths {
 
   static const prefixOfHome = '/home';
 
+  /// 新建「无边画布」时带的查询参数。
+  static const infiniteCanvasQuery = 'infinite';
+
+  static String newInfiniteCanvas([String? filePath]) {
+    var route = '$edit?$infiniteCanvasQuery=true';
+    if (filePath != null) {
+      route += '&path=${Uri.encodeQueryComponent(filePath)}';
+    }
+    return route;
+  }
+
   static String editFilePath(String filePath) {
     return '$edit?path=${Uri.encodeQueryComponent(filePath)}';
   }

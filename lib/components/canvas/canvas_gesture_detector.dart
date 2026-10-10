@@ -7,6 +7,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:keybinder/keybinder.dart';
+import 'package:logging/logging.dart';
 import 'package:saber/components/canvas/hud/canvas_hud.dart';
 import 'package:saber/components/canvas/interactive_canvas.dart';
 import 'package:saber/data/editor/page.dart';
@@ -36,11 +37,19 @@ class CanvasGestureDetector extends StatefulWidget {
     required this.pageBuilder,
     required this.placeholderPageBuilder,
     required this.isTextEditing,
+    this.isInfiniteCanvas = false,
+    this.onCanvasResize,
     TransformationController? transformationController,
   }) : _transformationController =
            transformationController ?? TransformationController();
 
   final String filePath;
+
+  /// 无边画布：一整块大画布，不做「适应屏幕」的缩放，靠平移/缩放来看。
+  final bool isInfiniteCanvas;
+
+  /// 无边画布自动长大之后通知外面重建（`Canvas` 的尺寸是 build 时读的）。
+  final VoidCallback? onCanvasResize;
 
   final bool Function(ScaleStartDetails scaleDetails) isDrawGesture;
   final ValueChanged<ScaleEndDetails>? onInteractionEnd;
@@ -111,8 +120,10 @@ class CanvasGestureDetector extends StatefulWidget {
     );
     transformationController.value = Matrix4.translationValues(
       0,
-      // Slight upwards offset so that the page is not flush with the top of the screen
-      topOfPage + 50,
+      // 不能留正偏移：getPageIndex() 靠「scrollY 落在哪一页」判定当前页，
+      // 只要目标页顶部还在屏幕顶下方，落点就被算进上一页 —— 页码胶囊会
+      // 显示上一页，翻页箭头点一次就卡住（current + 1 每次都算回同一页）。
+      topOfPage,
       0,
     );
   }
@@ -144,6 +155,8 @@ class CanvasGestureDetector extends StatefulWidget {
 }
 
 class CanvasGestureDetectorState extends State<CanvasGestureDetector> {
+  static final log = Logger('CanvasGestureDetector');
+
   late var containerBounds = const BoxConstraints();
 
   /// If zooming is locked, this is the zoom level.
@@ -345,6 +358,23 @@ class CanvasGestureDetectorState extends State<CanvasGestureDetector> {
       if (zoomLockedValue != null) {
         zoomLockedValue = transformCacheItem.transform.approxScale;
       }
+    } else if (widget.isInfiniteCanvas &&
+        widget.pages.isNotEmpty &&
+        widget.pages.every((EditorPage page) => page.isEmpty)) {
+      // 空的无边画布笔记：把视口摆到画布正中，四周都留出平移余量。
+      //
+      // 摆到 (0,0) 的话画布左上角贴着屏幕左上角，横向只剩"往左"一个方向可拖，
+      // 往右一步就出画布被边界挡住。
+      //
+      // **只对空笔记这么做**：已经写过东西的笔记，笔迹都在画布左上角附近，
+      // 一居中就整屏看不到内容，用户会以为笔记被清空了。
+      final pageSize = widget.pages.first.size;
+      final screen = MediaQuery.sizeOf(context);
+      widget._transformationController.value = Matrix4.translationValues(
+        -(pageSize.width - screen.width) / 2,
+        -(pageSize.height - screen.height) / 2,
+        0,
+      );
     } else if (widget.initialPageIndex != null) {
       // if we're opening a different note, scroll to the last recorded page
       CanvasGestureDetector.scrollToPage(
@@ -362,6 +392,21 @@ class CanvasGestureDetectorState extends State<CanvasGestureDetector> {
   /// If the scale is less than 1, centers the pages horizontally.
   /// Otherwise, prevents the user from scrolling past the edges.
   void onTransformChanged() {
+    // 无边画布下**必须**跳过这段：它是为文档模式写的。
+    //
+    // 文档模式里页面宽度就等于视口宽度，横向没有可滚动的余地，所以下面会把
+    // translation.x 强行按进 [minX, 0]（scale=1 时 minX=0），等于把任何横向位移
+    // 立刻抵消掉。套到 6000 宽的无边画布上，症状就是"只能上下拖，不能左右拖"：
+    // 手势确实动了、`_matrixTranslate` 也放行了，结果回来一看 x 又被推回 0。
+    //
+    // 无边画布的边界交给 InteractiveCanvasViewer（boundaryMargin 为 0 + 6000×6000
+    // 的 child）去管，这里不再插手。
+    if (widget.isInfiniteCanvas) {
+      _snapZoomTimer?.cancel();
+      _growInfiniteCanvasIfNeeded();
+      return;
+    }
+
     final scale = widget._transformationController.value.approxScale;
     final translation = widget._transformationController.value.getTranslation();
 
@@ -401,6 +446,73 @@ class CanvasGestureDetectorState extends State<CanvasGestureDetector> {
         1,
       );
     }
+  }
+
+  /// 无边画布：视口快贴到画布边上时，把画布接出去一段。
+  ///
+  /// 起始的 8000×8000 对"一整块大纸"来说并不算大（缩到 0.3x 时一屏就能看到头），
+  /// 所以做成按需生长：还剩不到 [buffer] 就长 [growBy]，用户永远碰不到边 ——
+  /// 拖到头就被挡住、然后看到画布外的空白，那种"这张纸就这么大"的感觉就没了。
+  ///
+  /// 只往**右、下**长。左、上是画布坐标系的原点方向，往外扩需要把已有笔迹的
+  /// 坐标整体平移，风险大得多；而写字本来就是从左上往右下走的。
+  /// 给定视口在画布坐标系里覆盖的范围，算出画布该长到多大。
+  ///
+  /// 还剩不到 [buffer] 就长 [growBy]：长完之后 `right` 又离新边界 [growBy] 远，
+  /// 所以不会一次接一次地抖着长。
+  @visibleForTesting
+  static Size grownCanvasSize({
+    required Size canvasSize,
+    required double left,
+    required double top,
+    required double right,
+    required double bottom,
+    double buffer = 2000,
+    double growBy = 4000,
+  }) {
+    var width = canvasSize.width;
+    var height = canvasSize.height;
+    if (right > width - buffer) width = right + growBy;
+    if (bottom > height - buffer) height = bottom + growBy;
+    return Size(width, height);
+  }
+
+  void _growInfiniteCanvasIfNeeded() {
+    if (widget.pages.isEmpty) return;
+    if (containerBounds.maxWidth <= 0 || containerBounds.maxHeight <= 0) return;
+
+    final page = widget.pages.first;
+    final matrix = widget._transformationController.value;
+    final scale = matrix.approxScale;
+    if (scale <= 0 || !scale.isFinite) return;
+    final translation = matrix.getTranslation();
+
+    // 视口在画布坐标系里覆盖到的范围
+    final left = -translation.x / scale;
+    final top = -translation.y / scale;
+    final right = left + containerBounds.maxWidth / scale;
+    final bottom = top + containerBounds.maxHeight / scale;
+
+    final grown = grownCanvasSize(
+      canvasSize: page.size,
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+    );
+    if (grown.width <= page.size.width && grown.height <= page.size.height) {
+      return;
+    }
+
+    log.info(
+      '无边画布自动扩展: ${page.size.width}x${page.size.height} '
+      '-> ${grown.width}x${grown.height} '
+      '(视口 ${left.toStringAsFixed(0)},${top.toStringAsFixed(0)}'
+      ' - ${right.toStringAsFixed(0)},${bottom.toStringAsFixed(0)})',
+    );
+    page.growTo(grown);
+    // Canvas 的 SizedBox 尺寸是 build 时读的，得让外面重建一次
+    widget.onCanvasResize?.call();
   }
 
   /// Resets the zoom level to 1.0x
@@ -501,20 +613,43 @@ class CanvasGestureDetectorState extends State<CanvasGestureDetector> {
                 this.containerBounds = containerBounds;
 
                 return InteractiveCanvasViewer.builder(
-                  minScale: zoomLockedValue ?? CanvasGestureDetector.kMinScale,
+                  // 无边画布：缩到最小时画布也必须仍然盖满视口，否则会看到画布外的空白
+                  minScale:
+                      zoomLockedValue ??
+                      (widget.isInfiniteCanvas && widget.pages.isNotEmpty
+                          ? max(
+                              CanvasGestureDetector.kMinScale,
+                              max(
+                                screenSize.width / widget.pages.first.size.width,
+                                screenSize.height /
+                                    widget.pages.first.size.height,
+                              ),
+                            )
+                          : CanvasGestureDetector.kMinScale),
                   maxScale: zoomLockedValue ?? CanvasGestureDetector.kMaxScale,
                   panEnabled: !singleFingerPanLock,
-                  panAxis: axisAlignedPanLock ? PanAxis.aligned : PanAxis.free,
+                  // 无边画布永远自由平移：否则一旦开了"轴对齐平移锁"，起手方向就会把
+                  // 拖动锁成单轴（起手朝上就只能上下拖），在无限画布上非常难受。
+                  panAxis: widget.isInfiniteCanvas
+                      ? PanAxis.free
+                      : (axisAlignedPanLock ? PanAxis.aligned : PanAxis.free),
 
                   // Smoother scrolling fling gesture than the default
                   interactionEndFrictionCoefficient: 0.1,
 
-                  // we need a non-zero boundary margin so we can zoom out
-                  // past the size of the page (for minScale < 1)
-                  boundaryMargin: .symmetric(
-                    vertical: 0,
-                    horizontal: screenSize.width * 2,
-                  ),
+                  // 无边画布不许拖出画布范围，否则会露出边界、露出"这不是无边"的破绽
+                  boundaryMargin: widget.isInfiniteCanvas
+                      ? EdgeInsets.zero
+                      // 文档式需要一个非零的边界余量，才能缩到比页面还小
+                      // （minScale < 1 的时候）
+                      : .symmetric(
+                          vertical: 0,
+                          horizontal: screenSize.width * 2,
+                        ),
+
+                  // 无边画布：child 必须能拿到无限宽约束，否则宽度会被压成视口宽，
+                  // _boundaryRect 的横向余量就是 0 —— 表现为"只能上下拖，不能左右拖"。
+                  unconstrainedWidth: widget.isInfiniteCanvas,
 
                   transformationController: widget._transformationController,
 
@@ -531,6 +666,7 @@ class CanvasGestureDetectorState extends State<CanvasGestureDetector> {
                       placeholderPageBuilder: widget.placeholderPageBuilder,
                       boundingBox: _axisAlignedBoundingBox(viewport),
                       containerWidth: containerBounds.maxWidth,
+                      isInfiniteCanvas: widget.isInfiniteCanvas,
                     );
                   },
                 );
@@ -604,6 +740,7 @@ class _PagesBuilder extends StatelessWidget {
     required this.placeholderPageBuilder,
     required this.boundingBox,
     required this.containerWidth,
+    this.isInfiniteCanvas = false,
   });
 
   final List<EditorPage> pages;
@@ -612,9 +749,17 @@ class _PagesBuilder extends StatelessWidget {
   placeholderPageBuilder;
   final Rect boundingBox;
   final double containerWidth;
+  final bool isInfiniteCanvas;
 
   @override
   Widget build(BuildContext context) {
+    // 无边画布就是一整块：不做多页堆叠、也没有页与页之间的间隔，
+    // 否则用户会看到一道道"页面分界线"。
+    if (isInfiniteCanvas && pages.isNotEmpty) {
+      pages.first.isRendered = true;
+      return pageBuilder(context, 0);
+    }
+
     final List<Widget> children = [
       const SizedBox.square(dimension: Editor.gapBetweenPages),
       const SizedBox.square(dimension: Editor.gapBetweenPages),
@@ -623,10 +768,10 @@ class _PagesBuilder extends StatelessWidget {
     double topOfPage = Editor.gapBetweenPages * 2;
     for (int pageIndex = 0; pageIndex < pages.length; pageIndex++) {
       final page = pages[pageIndex];
-      final pageWidth = min(
-        page.size.width,
-        containerWidth,
-      ); // because of FittedBox
+      // 文档式会被 FittedBox 压到容器宽度；无边画布不做缩放，保持原尺寸。
+      final pageWidth = isInfiniteCanvas
+          ? page.size.width
+          : min(page.size.width, containerWidth); // because of FittedBox
       final pageHeight = pageWidth / page.size.width * page.size.height;
       final bottomOfPage = topOfPage + pageHeight;
 

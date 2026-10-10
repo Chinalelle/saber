@@ -33,6 +33,7 @@ class InteractiveCanvasViewer extends StatefulWidget {
     this.panAxis = PanAxis.free,
     this.boundaryMargin = .zero,
     this.constrained = true,
+    this.unconstrainedWidth = false,
     // These default scale values were eyeballed as reasonable limits for common
     // use cases.
     this.maxScale = 2.5,
@@ -95,6 +96,7 @@ class InteractiveCanvasViewer extends StatefulWidget {
     this.scaleFactor = 200.0,
     this.transformationController,
     this.alignment,
+    this.unconstrainedWidth = false,
     this.trackpadScrollCausesScale = false,
     required InteractiveCanvasViewerWidgetBuilder this.builder,
   }) : assert(minScale > 0),
@@ -205,6 +207,12 @@ class InteractiveCanvasViewer extends StatefulWidget {
   /// ** See code in examples/api/lib/widgets/interactive_viewer/interactive_viewer.constrained.0.dart **
   /// {@end-tool}
   final bool constrained;
+
+  /// 是否放开宽度约束。
+  ///
+  /// 无边画布必须放开 —— 否则 child 的宽度会被压成视口宽度，`_boundaryRect`
+  /// 在横向上就没有余量，表现就是"只能上下拖、左右拖不动"。
+  final bool unconstrainedWidth;
 
   /// If false, the user will be prevented from panning.
   ///
@@ -1086,6 +1094,7 @@ class _InteractiveCanvasViewerState extends State<InteractiveCanvasViewer>
         constrained: widget.constrained,
         matrix: _transformer.value,
         alignment: widget.alignment,
+        unconstrainedWidth: widget.unconstrainedWidth,
         child: widget.child!,
       );
     } else {
@@ -1102,6 +1111,7 @@ class _InteractiveCanvasViewerState extends State<InteractiveCanvasViewer>
             constrained: widget.constrained,
             alignment: widget.alignment,
             matrix: matrix,
+            unconstrainedWidth: widget.unconstrainedWidth,
             child: widget.builder!(
               context,
               _transformViewport(matrix, Offset.zero & constraints.biggest),
@@ -1137,12 +1147,14 @@ class _InteractiveCanvasViewerBuilt extends StatelessWidget {
     required this.constrained,
     required this.matrix,
     required this.alignment,
+    this.unconstrainedWidth = false,
   });
 
   final Widget child;
   final GlobalKey childKey;
   final Clip clipBehavior;
   final bool constrained;
+  final bool unconstrainedWidth;
   final Matrix4 matrix;
   final Alignment? alignment;
 
@@ -1159,7 +1171,7 @@ class _InteractiveCanvasViewerBuilt extends StatelessWidget {
         alignment: .topLeft,
         minWidth: 0,
         minHeight: 0,
-        // maxWidth: double.infinity,
+        maxWidth: unconstrainedWidth ? double.infinity : null,
         maxHeight: double.infinity,
         child: child,
       );

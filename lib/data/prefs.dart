@@ -15,6 +15,7 @@ import 'package:saber/data/sentry/sentry_consent.dart';
 import 'package:saber/data/tools/highlighter.dart';
 import 'package:saber/data/tools/pen.dart';
 import 'package:sbn/canvas_background_pattern.dart';
+import 'package:sbn/canvas_texture.dart';
 import 'package:sbn/tool_id.dart';
 import 'package:stow/stow.dart';
 import 'package:stow_codecs/stow_codecs.dart';
@@ -184,6 +185,15 @@ class Stows {
     volatile: !_isOnMainIsolate,
   );
 
+  /// 浮动文本框的背景透明度：0 = 完全透明，1 = 完全不透明。
+  ///
+  /// 默认 0.6，不用 0.9 —— 0.9 几乎把底下的笔迹全挡住，批注时看不见自己在写什么。
+  final textBoxOpacity = PlainStow<double>(
+    'textBoxOpacity',
+    0.6,
+    volatile: !_isOnMainIsolate,
+  );
+
   final autoClearWhiteboardOnExit = PlainStow(
     'autoClearWhiteboardOnExit',
     false,
@@ -304,8 +314,40 @@ class Stows {
     codec: const EnumCodec(CanvasBackgroundPattern.values),
     volatile: !_isOnMainIsolate,
   );
+
+  // ── 无边画布的默认预设 ──────────────────────────────
+  /// 米白
+  static const defaultInfiniteCanvasColor = Color(0xFFFDF6E3);
+  final infiniteCanvasColor = PlainStow(
+    'infiniteCanvasColor',
+    defaultInfiniteCanvasColor,
+    codec: const ColorCodec(),
+    volatile: !_isOnMainIsolate,
+  );
+  final infiniteCanvasPattern = PlainStow(
+    'infiniteCanvasPattern',
+    CanvasBackgroundPattern.none,
+    codec: const EnumCodec(CanvasBackgroundPattern.values),
+    volatile: !_isOnMainIsolate,
+  );
+  final infiniteCanvasTexture = PlainStow(
+    'infiniteCanvasTexture',
+    CanvasTexture.smooth,
+    codec: const EnumCodec(CanvasTexture.values),
+    volatile: !_isOnMainIsolate,
+  );
   static const defaultLineHeight = 40;
   static const defaultLineThickness = 3;
+
+  /// 方格／点阵的疏密倍率：0.5 = 间距减半（比默认密一倍）。
+  ///
+  /// 只作用于 `CanvasBackgroundPattern.grid` 和 `.dots`，
+  /// 横线纸／五线谱／康奈尔笔记仍然按 lineHeight 走。
+  final gridDensity = PlainStow<double>(
+    'gridDensity',
+    0.5,
+    volatile: !_isOnMainIsolate,
+  );
   final lastLineHeight = PlainStow(
     'lastLineHeight',
     defaultLineHeight,
@@ -395,6 +437,44 @@ class Stows {
   );
 
   final locale = PlainStow('locale', '', volatile: !_isOnMainIsolate);
+
+  // ── AI 大纲（大模型识别 PDF／图片生成目录）────────────
+  //
+  // 注意：API Key 只存在这台设备的偏好设置里，**绝不写进 .sbn2 笔记文件**。
+  // 笔记文件会被导出、同步、也可能像上次那样整个丢，密钥不能跟着走。
+  static const defaultAiBaseUrl = 'https://api.deepseek.com';
+  static const defaultAiModel = 'deepseek-flash';
+
+  /// DeepSeek（或兼容 OpenAI 接口的服务）的 API Key。
+  final aiApiKey = PlainStow('aiApiKey', '', volatile: !_isOnMainIsolate);
+
+  /// 接口地址，不含 `/chat/completions`。默认 DeepSeek 官方。
+  final aiBaseUrl = PlainStow(
+    'aiBaseUrl',
+    defaultAiBaseUrl,
+    volatile: !_isOnMainIsolate,
+  );
+
+  /// 模型名。默认 V4.1 Flash（原生多模态，调用名就是 `deepseek-flash`）。
+  final aiModel = PlainStow(
+    'aiModel',
+    defaultAiModel,
+    volatile: !_isOnMainIsolate,
+  );
+
+  /// 每次请求带几页图片。页数越多越快，但单次失败要重跑的就越多。
+  final aiPagesPerBatch = PlainStow(
+    'aiPagesPerBatch',
+    8,
+    volatile: !_isOnMainIsolate,
+  );
+
+  /// 渲染每一页时用的长边像素。太大费 token，太小标题认不清。
+  final aiRenderLongSide = PlainStow(
+    'aiRenderLongSide',
+    1400,
+    volatile: !_isOnMainIsolate,
+  );
 
   final sentryConsent = PlainStow(
     'sentryConsent',

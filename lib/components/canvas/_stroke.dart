@@ -172,6 +172,15 @@ class Stroke {
       options.simulatePressure = false;
     }
 
+    // 提高有效采样率：触控事件的频率是硬件定的，软件侧想要更密的点就得自己插值。
+    // 在真实触点和上一个点之间补一个中点，点数大约翻倍。
+    // （渲染那边用的是 StrokeQuality.high(1)，不会再把点跳掉，所以插进来的点都会用上。）
+    if (points.isNotEmpty) {
+      final prev = points.last;
+      final mid = prev + (point - prev) * 0.5;
+      points.add(PointVector(mid.dx, mid.dy, pressure));
+    }
+
     points.add(PointVector(point.dx, point.dy, pressure));
     markPolygonNeedsUpdating();
   }
@@ -180,6 +189,69 @@ class Stroke {
     for (final point in points) {
       addPoint(point);
     }
+  }
+
+  /// 按 [inside] 把这条笔迹拆成几段：落在 [inside] 里的点被剔除，
+  /// 剩下的连续点各自成为一条新笔迹（颜色、粗细、工具等属性照搬）。
+  ///
+  /// 区域擦子就是靠它实现的：返回空 = 整条都被覆盖；返回一条且点数没变 = 没被碰到。
+  List<Stroke> cutBy(bool Function(Offset point) inside) {
+    final result = <Stroke>[];
+    var run = <PointVector>[];
+
+    void flush() {
+      // 只有一个点构不成笔迹，直接丢掉
+      if (run.length >= 2) result.add(_copyWithPoints(run));
+      run = <PointVector>[];
+    }
+
+    /// 相邻两点之间按这个间距补插值。
+    ///
+    /// 必须补：笔迹的点可能很稀（快速划的长线常常就两三个点），只按原始点判断的话，
+    /// 擦除区域落在两点中间时会"一个点都没盖到"（擦不动），或者只剩一个点被判成
+    /// 构不成笔迹而丢掉（整条消失）—— 那就不叫按区域擦了。
+    const interpStep = 3.0;
+
+    PointVector? prev;
+    for (final point in points) {
+      if (prev != null) {
+        final delta = point - prev;
+        final steps = (delta.distance / interpStep).floor();
+        for (var i = 1; i < steps; i++) {
+          final mid = prev + delta * (i / steps);
+          if (inside(mid)) {
+            flush();
+          } else {
+            run.add(PointVector(mid.dx, mid.dy, null));
+          }
+        }
+      }
+
+      if (inside(point)) {
+        flush();
+      } else {
+        run.add(point);
+      }
+      prev = point;
+    }
+    flush();
+    return result;
+  }
+
+  /// 造一条只含 [newPoints] 的笔迹，其余属性照搬。
+  Stroke _copyWithPoints(List<PointVector> newPoints) {
+    final copy = Stroke(
+      color: color,
+      pressureEnabled: pressureEnabled,
+      options: options,
+      pageIndex: pageIndex,
+      page: page,
+      toolId: toolId,
+    );
+    // 直接把点塞进去，保留原来的压力值
+    copy.points.addAll(newPoints);
+    copy.markPolygonNeedsUpdating();
+    return copy;
   }
 
   void popFirstPoint() {
